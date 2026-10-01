@@ -33,8 +33,15 @@ func main() {
 
 	var next atomic.Uint64
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		i := next.Add(1) - 1
-		backends[i%uint64(len(backends))].proxy.ServeHTTP(w, r)
+		start := next.Add(1) - 1
+		for offset := range uint64(len(backends)) {
+			b := backends[(start+offset)%uint64(len(backends))]
+			if b.alive.Load() {
+				b.proxy.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.Error(w, "no backends available", http.StatusServiceUnavailable)
 	})
 
 	client := &http.Client{

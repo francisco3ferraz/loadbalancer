@@ -18,5 +18,11 @@ func main() {
 		log.Printf("%s %s %s from %s", port, r.Method, r.URL.Path, r.RemoteAddr)
 		w.Write([]byte(port))
 	})
+
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s %s from %s", port, r.Method, r.URL.Path, r.RemoteAddr)
+		w.Write([]byte("ok"))
+	})
+
 	log.Fatal(http.ListenAndServe(port, nil))
 }

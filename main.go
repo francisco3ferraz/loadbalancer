@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +16,8 @@ type backend struct {
 	alive atomic.Bool
 }
 
+type failedKey struct{}
+
 func main() {
 	addrs := []string{"http://127.0.0.1:8080", "http://127.0.0.1:8081", "http://127.0.0.1:8082"}
 
@@ -27,6 +30,13 @@ func main() {
 
 		b := &backend{url: u, proxy: httputil.NewSingleHostReverseProxy(u)}
 		b.alive.Store(true)
+		b.proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Printf("%s failed: %v", b.url.Host, err)
+			b.alive.Store(false)
+			if p, ok := r.Context().Value(failedKey{}).(*bool); ok {
+				*p = true
+			}
+		}
 
 		backends = append(backends, b)
 	}
@@ -34,12 +44,25 @@ func main() {
 	var next atomic.Uint64
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		start := next.Add(1) - 1
+		failed := false
+		r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failed))
 		for offset := range uint64(len(backends)) {
 			b := backends[(start+offset)%uint64(len(backends))]
 			if b.alive.Load() {
+				failed = false
 				b.proxy.ServeHTTP(w, r)
-				return
+				if !failed {
+					return
+				}
+				if !isRetryable(r) {
+					http.Error(w, "bad gateway", http.StatusBadGateway)
+					return
+				}
 			}
+		}
+		if failed {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
 		}
 		http.Error(w, "no backends available", http.StatusServiceUnavailable)
 	})
@@ -79,4 +102,8 @@ func isHealthy(b *backend, client *http.Client) bool {
 	defer resp.Body.Close()
 
 	return resp.StatusCode == http.StatusOK
+}
+
+func isRetryable(r *http.Request) bool {
+	return r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
 }

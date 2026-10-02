@@ -14,20 +14,20 @@ import (
 	"time"
 )
 
-// requestTimeout is the total time a request may take, across all retries.
-const requestTimeout = 10 * time.Second
-
 // Balancer is an http.Handler that forwards each request to one of its backends.
 type Balancer struct {
-	backends []*backend
-	next     atomic.Uint64
-	client   *http.Client // for health checks
+	backends       []*backend
+	next           atomic.Uint64
+	client         *http.Client  // for health checks
+	requestTimeout time.Duration // total time per request, across retries
 }
 
 // New returns a Balancer for the given backend URLs, such as
 // "http://127.0.0.1:8080".
-func New(addrs []string) (*Balancer, error) {
-	if len(addrs) == 0 {
+func New(cfg Config) (*Balancer, error) {
+	cfg = cfg.withDefaults()
+
+	if len(cfg.Backends) == 0 {
 		return nil, errors.New("no backends given")
 	}
 
@@ -35,15 +35,18 @@ func New(addrs []string) (*Balancer, error) {
 	// Cloning keeps the default settings; only the timeouts change.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext
-	transport.ResponseHeaderTimeout = 5 * time.Second
+	transport.ResponseHeaderTimeout = cfg.AttemptTimeout
 
-	lb := &Balancer{client: &http.Client{Timeout: 2 * time.Second}}
-	for _, addr := range addrs {
+	lb := &Balancer{
+		client:         &http.Client{Timeout: 2 * time.Second},
+		requestTimeout: cfg.RequestTimeout,
+	}
+	for _, addr := range cfg.Backends {
 		u, err := url.Parse(addr)
 		if err != nil {
 			return nil, fmt.Errorf("parse backend %q: %w", addr, err)
 		}
-		lb.backends = append(lb.backends, newBackend(u, transport))
+		lb.backends = append(lb.backends, newBackend(u, transport, int32(cfg.MaxFailures)))
 	}
 	return lb, nil
 }
@@ -52,7 +55,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	failed := false
 
 	r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failed))
-	timeoutCtx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	timeoutCtx, cancel := context.WithTimeout(r.Context(), lb.requestTimeout)
 	defer cancel()
 	r = r.WithContext(timeoutCtx)
 

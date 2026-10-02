@@ -11,23 +11,23 @@ import (
 	"sync/atomic"
 )
 
-// maxFailures is how many failures in a row (other than connection errors)
-// mark a backend down.
-const maxFailures = 3
-
 type backend struct {
 	url      *url.URL
 	proxy    *httputil.ReverseProxy
 	alive    atomic.Bool
 	failures atomic.Int32
+
+	// maxFailures is how many failures in a row (other than connection
+	// errors) mark the backend down.
+	maxFailures int32
 }
 
 // failedKey is the context key under which ServeHTTP stores a *bool that
 // handleError sets when an attempt fails.
 type failedKey struct{}
 
-func newBackend(u *url.URL, transport http.RoundTripper) *backend {
-	b := &backend{url: u, proxy: httputil.NewSingleHostReverseProxy(u)}
+func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32) *backend {
+	b := &backend{url: u, proxy: httputil.NewSingleHostReverseProxy(u), maxFailures: maxFailures}
 	b.alive.Store(true)
 	b.proxy.Transport = transport
 	b.proxy.ErrorHandler = b.handleError
@@ -59,7 +59,7 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 		dead = true
 	} else {
 		count := b.failures.Add(1)
-		dead = count >= maxFailures
+		dead = count >= b.maxFailures
 	}
 
 	if dead && b.alive.CompareAndSwap(true, false) {

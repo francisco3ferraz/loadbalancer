@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -11,10 +12,13 @@ import (
 	"time"
 )
 
+const maxFailure = 3
+
 type backend struct {
-	url   *url.URL
-	proxy *httputil.ReverseProxy
-	alive atomic.Bool
+	url     *url.URL
+	proxy   *httputil.ReverseProxy
+	alive   atomic.Bool
+	failure atomic.Int32
 }
 
 type failedKey struct{}
@@ -41,8 +45,20 @@ func main() {
 				log.Printf("%s: client gave up: %v", b.url.Host, err)
 				return
 			}
-			log.Printf("%s failed: %v", b.url.Host, err)
-			b.alive.Store(false)
+
+			dead := false
+			var opErr *net.OpError
+			if errors.As(err, &opErr) && opErr.Op == "dial" {
+				dead = true
+			} else {
+				count := b.failure.Add(1)
+				dead = count >= maxFailure
+			}
+
+			if dead && b.alive.CompareAndSwap(true, false) {
+				log.Printf("%s marked down: %v", b.url.Host, err)
+			}
+
 			if p, ok := r.Context().Value(failedKey{}).(*bool); ok {
 				*p = true
 			}
@@ -62,6 +78,7 @@ func main() {
 				failed = false
 				b.proxy.ServeHTTP(w, r)
 				if !failed {
+					b.failure.Store(0)
 					return
 				}
 				if !isRetryable(r) {
@@ -94,6 +111,7 @@ func runHealthChecks(backends []*backend, client *http.Client, interval time.Dur
 			alive := isHealthy(b, client)
 			if alive != b.alive.Load() {
 				if alive {
+					b.failure.Store(0)
 					log.Printf("%s is up", b.url.Host)
 				} else {
 					log.Printf("%s is down", b.url.Host)

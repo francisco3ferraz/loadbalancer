@@ -21,3 +21,26 @@ func (rr *roundRobin) pick(candidates []*backend, r *http.Request) *backend {
 	counter := rr.counter.Add(1) - 1
 	return candidates[counter%uint64(len(candidates))]
 }
+
+// leastConnections picks the candidate with the fewest requests in progress.
+// The scan starts at a rotating position, so equally busy backends take turns
+// instead of the first one always winning.
+type leastConnections struct {
+	counter atomic.Uint64
+}
+
+func (lc *leastConnections) pick(candidates []*backend, r *http.Request) *backend {
+	n := uint64(len(candidates))
+	start := lc.counter.Add(1) - 1
+
+	best := candidates[start%n]
+	least := best.active.Load()
+	for i := uint64(1); i < n; i++ {
+		c := candidates[(start+i)%n]
+		if active := c.active.Load(); active < least {
+			best, least = c, active
+		}
+	}
+
+	return best
+}

@@ -60,6 +60,10 @@ func TestNewErrors(t *testing.T) {
 	tests := map[string]Config{
 		"no backends": {},
 		"bad url":     {Backends: []string{"http://[::1"}},
+		"bad algorithm": {
+			Backends:  []string{"http://127.0.0.1:1"},
+			Algorithm: "fastest",
+		},
 	}
 	for name, cfg := range tests {
 		if _, err := New(cfg); err == nil {

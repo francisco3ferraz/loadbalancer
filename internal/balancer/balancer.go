@@ -30,6 +30,10 @@ func New(cfg Config) (*Balancer, error) {
 	if len(cfg.Backends) == 0 {
 		return nil, errors.New("no backends given")
 	}
+	p, err := newPicker(cfg.Algorithm)
+	if err != nil {
+		return nil, err
+	}
 
 	// One transport shared by every proxy, so they share a connection pool.
 	// Cloning keeps the default settings; only the timeouts change.
@@ -40,7 +44,7 @@ func New(cfg Config) (*Balancer, error) {
 	lb := &Balancer{
 		client:         &http.Client{Timeout: 2 * time.Second},
 		requestTimeout: cfg.RequestTimeout,
-		picker:         &roundRobin{},
+		picker:         p,
 	}
 	for _, addr := range cfg.Backends {
 		u, err := url.Parse(addr)

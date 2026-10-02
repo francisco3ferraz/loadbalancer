@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"fmt"
 	"net/http"
 	"sync/atomic"
 )
@@ -10,6 +11,17 @@ import (
 // request, so a picker only has to choose, not check health or retries.
 type picker interface {
 	pick(candidates []*backend, r *http.Request) *backend
+}
+
+func newPicker(alg Algorithm) (picker, error) {
+	switch alg {
+	case RoundRobin:
+		return &roundRobin{}, nil
+	case LeastConnections:
+		return &leastConnections{}, nil
+	default:
+		return nil, fmt.Errorf("unknown algorithm %q", alg)
+	}
 }
 
 // roundRobin takes the candidates in turn.

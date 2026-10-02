@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-const maxFailure = 3
+const (
+	maxFailure     = 3
+	requestTimeout = 10 * time.Second
+)
 
 type backend struct {
 	url     *url.URL
@@ -41,11 +44,21 @@ func main() {
 		b.alive.Store(true)
 		b.proxy.Transport = transport
 		b.proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			if r.Context().Err() != nil {
+			if p, ok := r.Context().Value(failedKey{}).(*bool); ok {
+				*p = true
+			}
+
+			// When the request's context has ended, the backend isn't to blame.
+			switch ctxErr := r.Context().Err(); {
+			case errors.Is(ctxErr, context.DeadlineExceeded):
+				log.Printf("%s: request deadline exceeded: %v", b.url.Host, err)
+				return
+			case ctxErr != nil:
 				log.Printf("%s: client gave up: %v", b.url.Host, err)
 				return
 			}
 
+			log.Printf("%s failed: %v", b.url.Host, err)
 			dead := false
 			var opErr *net.OpError
 			if errors.As(err, &opErr) && opErr.Op == "dial" {
@@ -58,10 +71,6 @@ func main() {
 			if dead && b.alive.CompareAndSwap(true, false) {
 				log.Printf("%s marked down: %v", b.url.Host, err)
 			}
-
-			if p, ok := r.Context().Value(failedKey{}).(*bool); ok {
-				*p = true
-			}
 		}
 
 		backends = append(backends, b)
@@ -71,26 +80,43 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		start := next.Add(1) - 1
 		failed := false
+
 		r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failed))
+		timeoutCtx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		defer cancel()
+		r = r.WithContext(timeoutCtx)
+
 		for offset := range uint64(len(backends)) {
 			b := backends[(start+offset)%uint64(len(backends))]
 			if b.alive.Load() {
 				failed = false
 				b.proxy.ServeHTTP(w, r)
+
 				if !failed {
 					b.failure.Store(0)
 					return
 				}
+
+				switch ctxErr := r.Context().Err(); {
+				case errors.Is(ctxErr, context.DeadlineExceeded):
+					http.Error(w, "gateway timedout", http.StatusGatewayTimeout)
+					return
+				case ctxErr != nil:
+					return
+				}
+
 				if !isRetryable(r) {
 					http.Error(w, "bad gateway", http.StatusBadGateway)
 					return
 				}
 			}
 		}
+
 		if failed {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return
 		}
+
 		http.Error(w, "no backends available", http.StatusServiceUnavailable)
 	})
 

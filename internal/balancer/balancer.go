@@ -66,7 +66,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		candidates = slices.DeleteFunc(candidates, func(c *backend) bool { return c == b })
 
 		failed = false
-		b.proxy.ServeHTTP(w, r)
+		b.serve(w, r)
 
 		if !failed {
 			b.failures.Store(0)

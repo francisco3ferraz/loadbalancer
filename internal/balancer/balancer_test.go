@@ -204,6 +204,28 @@ func TestClientGivingUpIsNotCounted(t *testing.T) {
 	}
 }
 
+func TestActiveCountsRequestsInProgress(t *testing.T) {
+	lb := newBalancer(t, Config{Backends: []string{hangingBackend(t)}})
+	b := lb.backends[0]
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		lb.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil))
+	}()
+
+	waitFor(t, "active == 1 while the request is in progress", func() bool { return b.active.Load() == 1 })
+
+	// Cut the request short: the count must still go back down.
+	cancel()
+	<-done
+	if got := b.active.Load(); got != 0 {
+		t.Errorf("active = %d after the request ended, want 0", got)
+	}
+}
+
 func TestHealthChecks(t *testing.T) {
 	healthy := make(chan bool, 1)
 	healthy <- false

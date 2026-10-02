@@ -133,16 +133,21 @@ func TestTimeoutsMarkDownAfterMaxFailures(t *testing.T) {
 	})
 	hanging := lb.backends[0]
 
-	// Requests alternate their starting backend, so the hanging one is tried
-	// first on requests 0, 2 and 4. Each of those times out and is retried on b.
-	for i := range 6 {
+	// Which requests reach the hanging backend depends on the picker, so this
+	// checks the rule rather than an order: it stays alive while it has fewer
+	// than MaxFailures failures, and goes down when it reaches them. Every
+	// request still succeeds, because a timeout is retried on b.
+	for i := 0; i < 10 && hanging.alive.Load(); i++ {
 		if code, _ := send(lb, http.MethodGet); code != http.StatusOK {
 			t.Errorf("request %d: status = %d, want %d", i, code, http.StatusOK)
 		}
-		wantAlive := i < 4
-		if got := hanging.alive.Load(); got != wantAlive {
-			t.Fatalf("after request %d: alive = %v, want %v (failures = %d)", i, got, wantAlive, hanging.failures.Load())
+		failures, alive := hanging.failures.Load(), hanging.alive.Load()
+		if alive != (failures < 3) {
+			t.Fatalf("after request %d: alive = %v with %d failures, want alive only below 3", i, alive, failures)
 		}
+	}
+	if hanging.alive.Load() {
+		t.Errorf("hanging backend still alive after 10 requests (failures = %d)", hanging.failures.Load())
 	}
 }
 

@@ -1,6 +1,6 @@
 // Package balancer implements an HTTP load balancer: it spreads requests
-// across backends with round robin, skips backends that are down, and
-// retries safe requests on another backend when one fails.
+// across backends using a pluggable algorithm, skips backends that are down,
+// and retries safe requests on another backend when one fails.
 package balancer
 
 import (
@@ -10,14 +10,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync/atomic"
+	"slices"
 	"time"
 )
 
 // Balancer is an http.Handler that forwards each request to one of its backends.
 type Balancer struct {
 	backends       []*backend
-	next           atomic.Uint64
+	picker         picker
 	client         *http.Client  // for health checks
 	requestTimeout time.Duration // total time per request, across retries
 }
@@ -40,6 +40,7 @@ func New(cfg Config) (*Balancer, error) {
 	lb := &Balancer{
 		client:         &http.Client{Timeout: 2 * time.Second},
 		requestTimeout: cfg.RequestTimeout,
+		picker:         &roundRobin{},
 	}
 	for _, addr := range cfg.Backends {
 		u, err := url.Parse(addr)
@@ -59,10 +60,10 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	r = r.WithContext(timeoutCtx)
 
-	for _, b := range lb.rotation() {
-		if !b.alive.Load() {
-			continue
-		}
+	candidates := lb.aliveBackends()
+	for len(candidates) > 0 {
+		b := lb.picker.pick(candidates, r)
+		candidates = slices.DeleteFunc(candidates, func(c *backend) bool { return c == b })
 
 		failed = false
 		b.proxy.ServeHTTP(w, r)
@@ -94,16 +95,16 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "no backends available", http.StatusServiceUnavailable)
 }
 
-// rotation returns the backends in the order this request should try them:
-// round robin, starting one further along on each request.
-func (lb *Balancer) rotation() []*backend {
-	n := uint64(len(lb.backends))
-	start := lb.next.Add(1) - 1
-	order := make([]*backend, 0, n)
-	for offset := range n {
-		order = append(order, lb.backends[(start+offset)%n])
+// aliveBackends returns the backends currently marked alive, in a new slice
+// that the caller may modify.
+func (lb *Balancer) aliveBackends() []*backend {
+	alive := make([]*backend, 0, len(lb.backends))
+	for _, b := range lb.backends {
+		if b.alive.Load() {
+			alive = append(alive, b)
+		}
 	}
-	return order
+	return alive
 }
 
 func isRetryable(r *http.Request) bool {

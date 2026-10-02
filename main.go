@@ -99,7 +99,7 @@ func main() {
 
 				switch ctxErr := r.Context().Err(); {
 				case errors.Is(ctxErr, context.DeadlineExceeded):
-					http.Error(w, "gateway timedout", http.StatusGatewayTimeout)
+					http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
 					return
 				case ctxErr != nil:
 					return

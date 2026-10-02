@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -21,6 +22,10 @@ type failedKey struct{}
 func main() {
 	addrs := []string{"http://127.0.0.1:8080", "http://127.0.0.1:8081", "http://127.0.0.1:8082"}
 
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	transport.ResponseHeaderTimeout = 5 * time.Second
+
 	var backends []*backend
 	for _, addr := range addrs {
 		u, err := url.Parse(addr)
@@ -30,7 +35,12 @@ func main() {
 
 		b := &backend{url: u, proxy: httputil.NewSingleHostReverseProxy(u)}
 		b.alive.Store(true)
+		b.proxy.Transport = transport
 		b.proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			if r.Context().Err() != nil {
+				log.Printf("%s: client gave up: %v", b.url.Host, err)
+				return
+			}
 			log.Printf("%s failed: %v", b.url.Host, err)
 			b.alive.Store(false)
 			if p, ok := r.Context().Value(failedKey{}).(*bool); ok {

@@ -1,0 +1,9 @@
+# Prometheus config for docker compose: scrapes the load balancer's admin
+# server, reached by its Compose service name.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: loadbalancer
+    static_configs:
+      - targets: ["loadbalancer:9000"]

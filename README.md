@@ -39,8 +39,8 @@ a real failure mode, and each one is covered by tests.
   client, so they can't be forged. The client's `Host` is kept.
 - **Access log:** one structured line per request on stdout, with the backend
   that served it and how many were tried; errors stay on stderr.
-- **Stats:** an optional admin server with a JSON `/stats` endpoint and
-  `pprof` profiles.
+- **Stats and metrics:** an optional admin server with a JSON `/stats`
+  endpoint, Prometheus metrics on `/metrics`, and `pprof` profiles.
 
 ## Quick start
 
@@ -69,8 +69,10 @@ curl 127.0.0.1:9000/stats
 docker compose stop backend2  # traffic goes to the other two
 ```
 
-This starts the load balancer and three fake backends, using
-[`docker/config.yaml`](docker/config.yaml). Inside a container `127.0.0.1` is
+This starts the load balancer, three fake backends and Prometheus, using
+[`docker/config.yaml`](docker/config.yaml). Prometheus scrapes `/metrics`
+every 5 seconds; open <http://127.0.0.1:9090> and try
+`rate(loadbalancer_backend_requests_total[1m])`. Inside a container `127.0.0.1` is
 that container, so the backends are reached by their Compose service names,
 and the admin server listens on all interfaces but is published only on the
 host's loopback.
@@ -180,14 +182,30 @@ With `admin_listen` set, `GET /stats` returns a snapshot of every backend:
 ```json
 {
   "backends": [
-    {"url": "http://127.0.0.1:8080", "alive": true, "active": 2, "failures": 0, "requests": 1532},
-    {"url": "http://127.0.0.1:8081", "alive": false, "active": 0, "failures": 3, "requests": 610}
+    {"url": "http://127.0.0.1:8080", "alive": true, "active": 2, "failures": 0, "requests": 1532, "total_failures": 4},
+    {"url": "http://127.0.0.1:8081", "alive": false, "active": 0, "failures": 3, "requests": 610, "total_failures": 27}
   ]
 }
 ```
 
-`active` is requests in progress, `failures` is failures in a row, and
-`requests` is attempts served in total.
+`active` is requests in progress, `failures` is failures in a row,
+`requests` is attempts served in total, and `total_failures` is failures in
+total. Failures the backend isn't blamed for, such as a client giving up or
+the request deadline running out, aren't counted.
+
+`GET /metrics` serves the same numbers in Prometheus' text format, with a
+`backend` label holding the backend's URL:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `loadbalancer_backend_up` | gauge | `1` if the backend is alive, `0` if down |
+| `loadbalancer_backend_active_requests` | gauge | Requests in progress |
+| `loadbalancer_backend_requests_total` | counter | Attempts sent to the backend |
+| `loadbalancer_backend_consecutive_failures` | gauge | Failures in a row |
+| `loadbalancer_backend_failures_total` | counter | Failures in total |
+
+A config reload starts the counters from zero, which `rate()` handles like a
+restart. A backend removed by a reload stops being reported.
 
 The admin server also serves Go's runtime profiles under `/debug/pprof/` (see
 [Performance](#performance)). Both show internal details, so it runs on a
@@ -248,7 +266,7 @@ internal/balancer    proxying, retries, timeouts, health checks, algorithms,
 internal/config      the YAML file format
 internal/admin       the /stats and /debug/pprof endpoints
 scripts/             run-backends.sh, bench.sh
-docker/              the config used by docker-compose.yml
+docker/              configs used by docker-compose.yml
 ```
 
 ## Performance
@@ -342,7 +360,8 @@ go tool pprof -http=: http://127.0.0.1:9000/debug/pprof/profile?seconds=20
 ## Not included
 
 These are real load balancer features, deliberately left out of scope:
-TLS termination, HTTP/2 to backends, Prometheus metrics, structured error
+TLS termination, HTTP/2 to backends, metrics by status code and latency
+histograms (`/metrics` has per-backend counts only), structured error
 logs (only the access log is structured), sticky sessions (consistent hashing), latency-based algorithms,
 trusted proxies (behind a CDN or another proxy, forwarding headers describe
 that proxy, not the real client), the standard `Forwarded` header, an

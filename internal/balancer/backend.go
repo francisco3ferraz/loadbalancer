@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync/atomic"
 )
 
@@ -133,8 +134,7 @@ func (b *backend) modifyResponse(resp *http.Response) error {
 		a.upgraded = true
 	}
 
-	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if mediaType == "text/event-stream" && err == nil {
+	if isEventStream(resp.Header.Get("Content-Type")) {
 		stop, ok := resp.Request.Context().Value(streamKey{}).(func())
 		if ok {
 			stop()
@@ -142,6 +142,18 @@ func (b *backend) modifyResponse(resp *http.Response) error {
 	}
 
 	return nil
+}
+
+// isEventStream reports whether contentType is text/event-stream.
+func isEventStream(contentType string) bool {
+	// ParseMediaType allocates, and showed up in profiles at 2% of CPU for
+	// a check that almost always fails, so rule out the rest cheaply first.
+	const want = "text/event-stream"
+	if len(contentType) < len(want) || !strings.EqualFold(contentType[:len(want)], want) {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && mediaType == want
 }
 
 // serve forwards one attempt to b, counting it in active for as long as it

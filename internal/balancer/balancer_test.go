@@ -782,3 +782,21 @@ func TestProxyKeepsBackendBasePath(t *testing.T) {
 		t.Errorf("backend got %v, want /api/users?id=1", r)
 	}
 }
+
+func TestIsEventStream(t *testing.T) {
+	tests := map[string]bool{
+		"text/event-stream":                true,
+		"Text/Event-Stream; charset=utf-8": true,
+		"text/event-stream;":               true,
+		"text/event-streams":               false,
+		"text/event-stream; =bad":          false,
+		"text/plain; charset=utf-8":        false,
+		"text/event":                       false,
+		"":                                 false,
+	}
+	for contentType, want := range tests {
+		if got := isEventStream(contentType); got != want {
+			t.Errorf("isEventStream(%q) = %v, want %v", contentType, got, want)
+		}
+	}
+}

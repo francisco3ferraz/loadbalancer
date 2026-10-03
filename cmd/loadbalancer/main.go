@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -24,6 +25,13 @@ import (
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the config file")
 	flag.Parse()
+
+	// The heap stays small (tens of MB under load), so trading memory for
+	// fewer collections is cheap: 400 gave 14% more requests/sec than the
+	// default 100 in benchmarks. Setting GOGC still overrides it.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(400)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

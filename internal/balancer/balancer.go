@@ -52,6 +52,11 @@ func New(cfg Config) (*Balancer, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = cfg.AttemptTimeout
+	// The default keeps 2 idle connections per backend, so under load most
+	// requests dialed a new one and closed it after, leaving sockets in
+	// TIME_WAIT. 0 lifts the total limit, leaving the per-backend one.
+	transport.MaxIdleConnsPerHost = 100
+	transport.MaxIdleConns = 0
 
 	lb := &Balancer{
 		client:         &http.Client{Timeout: 2 * time.Second},

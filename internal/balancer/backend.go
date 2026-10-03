@@ -45,7 +45,7 @@ var errRetryStatus = errors.New("retryable status")
 // a stream. Upgrades have no deadline, so they store nothing.
 type streamKey struct{}
 
-func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32, weight int) *backend {
+func newBackend(u *url.URL, transport http.RoundTripper, buffers httputil.BufferPool, maxFailures int32, weight int) *backend {
 	b := &backend{
 		url:         u,
 		proxy:       &httputil.ReverseProxy{},
@@ -55,6 +55,7 @@ func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32, weig
 	b.alive.Store(true)
 	b.proxy.Rewrite = b.rewrite
 	b.proxy.Transport = transport
+	b.proxy.BufferPool = buffers
 	b.proxy.ErrorHandler = b.handleError
 	b.proxy.ModifyResponse = b.modifyResponse
 	return b

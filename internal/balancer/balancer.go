@@ -57,6 +57,7 @@ func New(cfg Config) (*Balancer, error) {
 	// TIME_WAIT. 0 lifts the total limit, leaving the per-backend one.
 	transport.MaxIdleConnsPerHost = 100
 	transport.MaxIdleConns = 0
+	buffers := newBufferPool()
 
 	lb := &Balancer{
 		client:         &http.Client{Timeout: 2 * time.Second},
@@ -81,7 +82,7 @@ func New(cfg Config) (*Balancer, error) {
 		case weight < 0:
 			return nil, fmt.Errorf("backend %q: weight must not be negative", be.URL)
 		}
-		lb.backends = append(lb.backends, newBackend(u, transport, int32(cfg.MaxFailures), weight))
+		lb.backends = append(lb.backends, newBackend(u, transport, buffers, int32(cfg.MaxFailures), weight))
 	}
 	return lb, nil
 }

@@ -3,8 +3,10 @@ package balancer
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,10 +32,13 @@ func deadBackend(t *testing.T) string {
 
 // hangingBackend starts a backend that never answers. It waits on the
 // request's context rather than sleeping, because srv.Close blocks until
-// every request in progress has finished.
+// every request in progress has finished. It reads the body first: the
+// server only notices the client disconnecting, and cancels the context,
+// once the body has been read.
 func hangingBackend(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
 		<-r.Context().Done()
 	}))
 	t.Cleanup(srv.Close)
@@ -146,6 +151,27 @@ func TestPostIsNotRetried(t *testing.T) {
 
 	if code, _ := send(lb, http.MethodPost); code != http.StatusBadGateway {
 		t.Errorf("status = %d, want %d", code, http.StatusBadGateway)
+	}
+}
+
+// TestRequestWithBodyIsNotRetried: the first attempt sends the body, so a
+// retry would send it empty, and the next backend would fail and be blamed
+// for it. The client gets a 502 and the second backend is left alone.
+func TestRequestWithBodyIsNotRetried(t *testing.T) {
+	lb := newBalancer(t, Config{
+		Backends:       urls(hangingBackend(t), namedBackend(t, "b")),
+		AttemptTimeout: 50 * time.Millisecond,
+	})
+
+	rec := httptest.NewRecorder()
+	lb.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", strings.NewReader("hello")))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if second := lb.backends[1]; second.requests.Load() != 0 || second.failures.Load() != 0 {
+		t.Errorf("second backend: requests = %d, failures = %d; want it untouched",
+			second.requests.Load(), second.failures.Load())
 	}
 }
 

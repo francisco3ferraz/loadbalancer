@@ -133,6 +133,11 @@ func (lb *Balancer) aliveBackends() []*backend {
 	return alive
 }
 
+// isRetryable reports whether a failed attempt may be retried on another
+// backend. The method must be safe to repeat, and the request must have no
+// body: a body is read while it's sent, so a retry would send it empty, and
+// the next backend would fail through no fault of its own.
 func isRetryable(r *http.Request) bool {
-	return r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
+	safe := r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
+	return safe && r.ContentLength == 0 // -1 means a body of unknown length
 }

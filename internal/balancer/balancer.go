@@ -115,6 +115,10 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for len(candidates) > 0 {
 		b := lb.picker.pick(candidates, r)
 		candidates = slices.DeleteFunc(candidates, func(c *backend) bool { return c == b })
+		if a := accessFrom(r.Context()); a != nil {
+			a.backend = b.url.Host
+			a.attempts++
+		}
 
 		failErr = nil
 		b.serve(w, r)

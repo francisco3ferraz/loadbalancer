@@ -45,6 +45,11 @@ max_failures: 3
 # 1024, as in nginx's client_max_body_size). Default 1MB.
 max_body_size: 1MB
 
+# Log one line per request to stdout: method, path, status, size, duration,
+# client and backend. Errors and state changes go to stderr either way.
+# Default true.
+access_log: true
+
 # Address of the admin server, which serves GET /stats (a JSON snapshot of
 # every backend). It shows internal addresses, so keep it on 127.0.0.1,
 # where only this machine can reach it; ":9000" would accept connections

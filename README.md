@@ -28,6 +28,8 @@ a real failure mode, and each one is covered by tests.
   not the client declares the size up front, and backends aren't blamed.
 - **Graceful shutdown:** on Ctrl+C or `SIGTERM`, requests in progress finish
   before the process exits. A second Ctrl+C exits immediately.
+- **Access log:** one structured line per request on stdout, with the backend
+  that served it and how many were tried; errors stay on stderr.
 - **Stats:** an optional admin server with a JSON `/stats` endpoint.
 
 ## Quick start
@@ -63,6 +65,7 @@ Settings come from a YAML file. Only `backends` is required. The shipped
 | `attempt_timeout` | `5s` | How long one backend has to start answering |
 | `request_timeout` | `10s` | Total time for a request, across all retries; not applied to upgrades or event streams |
 | `max_failures` | `3` | Failures in a row that mark a backend down |
+| `access_log` | `true` | Log one line per request to stdout |
 | `max_body_size` | `1MB` | Largest request body accepted; bytes, or with `KB`, `MB` or `GB` |
 | `admin_listen` | off | Address of the admin server, e.g. `127.0.0.1:9000` |
 
@@ -116,6 +119,21 @@ If the client disconnects, sends a body over `max_body_size`, or
 `request_timeout` runs out, the backend isn't blamed: none of these counts as
 a backend failure. Backends marked down come back when their health check
 succeeds again.
+
+## Access log
+
+Every request gets one line on stdout once it's finished, in `log/slog`'s
+key=value format:
+
+```
+time=... level=INFO msg=request method=GET path=/status/404 status=404 bytes=14 duration=670µs client=[::1]:37894 backend=localhost:18081 attempts=2
+```
+
+`backend` is the last backend tried and `attempts` how many were, so retries
+show up as `attempts=2` or more. The query string is left out, since it can
+carry tokens. `status=0` means no response was sent because the client gave
+up first. WebSockets are logged as `101` when they close, so their `duration`
+is how long the connection was open. Set `access_log: false` to turn it off.
 
 ## Admin server
 
@@ -192,8 +210,8 @@ scripts/             run-backends.sh
 ## Not included
 
 These are real load balancer features, deliberately left out of scope:
-TLS termination, HTTP/2 to backends, Prometheus metrics, structured logging,
-reloading the config without a restart, sticky sessions (consistent hashing),
-latency-based algorithms, and an idle timeout for long-lived connections: a
-WebSocket or stream whose backend goes silent stays open until one end closes
-it.
+TLS termination, HTTP/2 to backends, Prometheus metrics, structured error
+logs (only the access log is structured), reloading the config without a
+restart, sticky sessions (consistent hashing), latency-based algorithms, and an
+idle timeout for long-lived connections: a WebSocket or stream whose backend
+goes silent stays open until one end closes it.

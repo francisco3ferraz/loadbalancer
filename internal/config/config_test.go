@@ -34,6 +34,7 @@ request_timeout: 1m
 max_failures: 5
 health_path: /healthz
 max_body_size: 10MB
+access_log: false
 admin_listen: "127.0.0.1:9001"
 `)
 	got, err := Load(path)
@@ -50,6 +51,7 @@ admin_listen: "127.0.0.1:9001"
 		MaxFailures:         5,
 		HealthPath:          "/healthz",
 		MaxBodySize:         10 << 20,
+		AccessLog:           new(false),
 		AdminListen:         "127.0.0.1:9001",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -57,6 +59,9 @@ admin_listen: "127.0.0.1:9001"
 	}
 	if hp := got.BalancerConfig().HealthPath; hp != "/healthz" {
 		t.Errorf("balancer health path = %q, want %q", hp, "/healthz")
+	}
+	if got.AccessLogEnabled() {
+		t.Error("access_log: false left the access log on")
 	}
 	if size := got.BalancerConfig().MaxBodySize; size != 10<<20 {
 		t.Errorf("balancer max body size = %d, want %d", size, 10<<20)
@@ -74,6 +79,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	if got.AdminListen != "" {
 		t.Errorf("admin_listen = %q, want empty (admin server off)", got.AdminListen)
+	}
+	if !got.AccessLogEnabled() {
+		t.Error("access log off by default, want on")
 	}
 	if got.EffectiveRequestTimeout() != 10*time.Second {
 		t.Errorf("EffectiveRequestTimeout() = %s, want the balancer's default of 10s", got.EffectiveRequestTimeout())

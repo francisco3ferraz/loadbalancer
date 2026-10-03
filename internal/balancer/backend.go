@@ -96,9 +96,14 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 
 // modifyResponse is the proxy's ModifyResponse hook, which runs when the
 // backend's response headers arrive. It lifts the request deadline for
-// server-sent events, which stay open for as long as the backend sends them.
+// server-sent events, which stay open for as long as the backend sends them,
+// and tells the access log about protocol switches, which it can't see.
 // It always returns nil: an error would make the proxy reply 502 instead.
 func (b *backend) modifyResponse(resp *http.Response) error {
+	if a := accessFrom(resp.Request.Context()); a != nil && resp.StatusCode == http.StatusSwitchingProtocols {
+		a.upgraded = true
+	}
+
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if mediaType == "text/event-stream" && err == nil {
 		stop, ok := resp.Request.Context().Value(streamKey{}).(func())

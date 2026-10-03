@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -37,9 +38,16 @@ func main() {
 	// write timeout and the shutdown drain both allow a little more than that.
 	drainTimeout := cfg.EffectiveRequestTimeout() + 5*time.Second
 
+	// Access lines go to stdout and everything else to stderr, so the two
+	// can be sent to different places, like nginx's access.log and error.log.
+	var handler http.Handler = lb
+	if cfg.AccessLogEnabled() {
+		handler = balancer.AccessLog(lb, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	}
+
 	srv := &http.Server{
 		Addr:    cfg.Listen,
-		Handler: lb,
+		Handler: handler,
 		// Slow clients can't hold connections open by sending headers slowly.
 		ReadHeaderTimeout: 5 * time.Second,
 		// Longer than the balancer's request timeout, so its 504 can be written.

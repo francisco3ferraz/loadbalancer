@@ -35,6 +35,10 @@ type Config struct {
 	HealthPath          string        `yaml:"health_path"`
 	MaxBodySize         ByteSize      `yaml:"max_body_size"`
 
+	// AccessLog turns the access log on or off. It's a pointer so that
+	// leaving it out can mean on, the default, while false turns it off.
+	AccessLog *bool `yaml:"access_log"`
+
 	// AdminListen is the address of the admin server, which serves /stats.
 	// Unlike the other settings, empty doesn't mean a default: it means
 	// the admin server is off.
@@ -178,6 +182,12 @@ func (c Config) BalancerConfig() balancer.Config {
 		HealthPath:     c.HealthPath,
 		MaxBodySize:    int64(c.MaxBodySize),
 	}
+}
+
+// AccessLogEnabled reports whether requests should be logged: true unless
+// the file sets access_log: false.
+func (c Config) AccessLogEnabled() bool {
+	return c.AccessLog == nil || *c.AccessLog
 }
 
 // EffectiveRequestTimeout is the balancer's request timeout as it will

@@ -22,14 +22,23 @@ type backend struct {
 	// maxFailures is how many failures in a row (other than connection
 	// errors) mark the backend down.
 	maxFailures int32
+
+	// weight is the backend's share of traffic under weighted round robin.
+	// It never changes after creation, so it needs no synchronisation.
+	weight int
 }
 
 // failedKey is the context key under which ServeHTTP stores a *bool that
 // handleError sets when an attempt fails.
 type failedKey struct{}
 
-func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32) *backend {
-	b := &backend{url: u, proxy: httputil.NewSingleHostReverseProxy(u), maxFailures: maxFailures}
+func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32, weight int) *backend {
+	b := &backend{
+		url:         u,
+		proxy:       httputil.NewSingleHostReverseProxy(u),
+		maxFailures: maxFailures,
+		weight:      weight,
+	}
 	b.alive.Store(true)
 	b.proxy.Transport = transport
 	b.proxy.ErrorHandler = b.handleError

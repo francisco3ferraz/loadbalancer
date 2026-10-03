@@ -41,7 +41,7 @@ admin_listen: "127.0.0.1:9001"
 	want := Config{
 		Listen:              ":9000",
 		Algorithm:           "least-connections",
-		Backends:            []string{"http://a:1", "http://b:2"},
+		Backends:            []Backend{{URL: "http://a:1"}, {URL: "http://b:2"}},
 		HealthCheckInterval: 2 * time.Second,
 		AttemptTimeout:      1500 * time.Millisecond,
 		RequestTimeout:      time.Minute,
@@ -86,6 +86,50 @@ func TestLoadConfigErrors(t *testing.T) {
 			_, err := Load(writeConfig(t, tt.content))
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("err = %v, want an error mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadConfigBackendForms(t *testing.T) {
+	got, err := Load(writeConfig(t, `
+backends:
+  - http://a:1
+  - url: http://b:2
+    weight: 3
+  - url: http://c:3
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Backend{
+		{URL: "http://a:1"},
+		{URL: "http://b:2", Weight: 3},
+		{URL: "http://c:3"},
+	}
+	if !reflect.DeepEqual(got.Backends, want) {
+		t.Errorf("backends = %+v, want %+v", got.Backends, want)
+	}
+
+	// Weights carry through to the balancer's config.
+	if w := got.BalancerConfig().Backends[1].Weight; w != 3 {
+		t.Errorf("balancer weight = %d, want 3", w)
+	}
+}
+
+func TestLoadConfigBackendErrors(t *testing.T) {
+	tests := []struct {
+		name, content, wantErr string
+	}{
+		{"typo in backend field", "backends:\n  - url: http://a:1\n    wieght: 3\n", `"wieght"`},
+		{"weight not a number", "backends:\n  - url: http://a:1\n    weight: heavy\n", "line 3"},
+		{"backend is a list", "backends:\n  - [http://a:1]\n", "must be a URL or an object"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want an error mentioning %s", err, tt.wantErr)
 			}
 		})
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -58,7 +60,7 @@ func TestLeastConnectionsSpreadsTies(t *testing.T) {
 // one backend is busy with a slow request, new requests go to the other.
 func TestLeastConnectionsAvoidsBusyBackend(t *testing.T) {
 	lb := newBalancer(t, Config{
-		Backends:       []string{hangingBackend(t), namedBackend(t, "b")},
+		Backends:       urls(hangingBackend(t), namedBackend(t, "b")),
 		Algorithm:      LeastConnections,
 		AttemptTimeout: 5 * time.Second,
 	})
@@ -92,4 +94,113 @@ func indexOf(bs []*backend, b *backend) int {
 		}
 	}
 	return -1
+}
+
+// weighted returns backends with the given weights.
+func weighted(weights ...int) []*backend {
+	bs := make([]*backend, len(weights))
+	for i, w := range weights {
+		bs[i] = &backend{weight: w}
+	}
+	return bs
+}
+
+// pickIndexes makes n picks and returns the index in bs of each one.
+func pickIndexes(p picker, bs []*backend, n int) []int {
+	got := make([]int, n)
+	for i := range n {
+		got[i] = indexOf(bs, p.pick(bs, nil))
+	}
+	return got
+}
+
+func TestWeightedRoundRobinIsSmooth(t *testing.T) {
+	bs := weighted(5, 1, 1)
+	// A A B A C A A, twice: the worked example from nginx's algorithm. A naive
+	// version would give A A A A A B C, sending A its requests in a burst.
+	want := []int{0, 0, 1, 0, 2, 0, 0, 0, 0, 1, 0, 2, 0, 0}
+	if got := pickIndexes(&weightedRoundRobin{}, bs, len(want)); !slices.Equal(got, want) {
+		t.Errorf("picks = %v, want %v", got, want)
+	}
+}
+
+func TestWeightedRoundRobinProportions(t *testing.T) {
+	bs := weighted(3, 1)
+	counts := make([]int, len(bs))
+	for _, i := range pickIndexes(&weightedRoundRobin{}, bs, 400) {
+		counts[i]++
+	}
+	if counts[0] != 300 || counts[1] != 100 {
+		t.Errorf("weights 3:1 over 400 picks gave %v, want [300 100]", counts)
+	}
+}
+
+// TestWeightedRoundRobinSubset checks that a backend missing from the
+// candidates (down, or already tried) simply sits out, and the rest share
+// the traffic by their own weights.
+func TestWeightedRoundRobinSubset(t *testing.T) {
+	bs := weighted(5, 1, 1)
+	wrr := &weightedRoundRobin{}
+	pickIndexes(wrr, bs, 3) // build up some state with all three
+
+	candidates := []*backend{bs[0], bs[2]}
+	counts := map[*backend]int{}
+	for range 60 {
+		counts[wrr.pick(candidates, nil)]++
+	}
+	if counts[bs[1]] != 0 {
+		t.Errorf("backend that wasn't a candidate was picked %d times", counts[bs[1]])
+	}
+	if counts[bs[0]] != 50 || counts[bs[2]] != 10 {
+		t.Errorf("weights 5:1 over 60 picks gave %d:%d, want 50:10", counts[bs[0]], counts[bs[2]])
+	}
+}
+
+// TestWeightedRoundRobinConcurrent runs picks from many goroutines. The
+// mutex makes each pick one step, so the totals come out exact; without it,
+// -race reports the map access and the totals drift.
+func TestWeightedRoundRobinConcurrent(t *testing.T) {
+	bs := weighted(5, 1, 1)
+	wrr := &weightedRoundRobin{}
+
+	var mu sync.Mutex
+	counts := map[*backend]int{}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			for range 700 {
+				b := wrr.pick(bs, nil)
+				mu.Lock()
+				counts[b]++
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+
+	// 5600 picks is 800 full cycles of 7.
+	if counts[bs[0]] != 4000 || counts[bs[1]] != 800 || counts[bs[2]] != 800 {
+		t.Errorf("got %d/%d/%d, want 4000/800/800", counts[bs[0]], counts[bs[1]], counts[bs[2]])
+	}
+}
+
+// TestWeightedRoundRobinThroughBalancer checks weights flow from Config to
+// the picker.
+func TestWeightedRoundRobinThroughBalancer(t *testing.T) {
+	lb := newBalancer(t, Config{
+		Backends: []Backend{
+			{URL: namedBackend(t, "a"), Weight: 3},
+			{URL: namedBackend(t, "b")}, // default weight 1
+		},
+		Algorithm: WeightedRoundRobin,
+	})
+
+	counts := map[string]int{}
+	for range 8 {
+		_, body := send(lb, http.MethodGet)
+		counts[body]++
+	}
+	if counts["a"] != 6 || counts["b"] != 2 {
+		t.Errorf("weights 3:1 over 8 requests gave a=%d b=%d, want 6 and 2", counts["a"], counts["b"])
+	}
 }

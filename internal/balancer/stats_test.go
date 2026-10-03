@@ -7,7 +7,7 @@ import (
 
 func TestStats(t *testing.T) {
 	healthy, dead := namedBackend(t, "a"), deadBackend(t)
-	lb := newBalancer(t, Config{Backends: []string{healthy, dead}})
+	lb := newBalancer(t, Config{Backends: urls(healthy, dead)})
 
 	// Round robin starts at the healthy backend, then the dead one fails once
 	// and is retried on the healthy one. That's 2 attempts on a, 1 on the dead.

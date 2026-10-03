@@ -22,8 +22,9 @@ type Balancer struct {
 	requestTimeout time.Duration // total time per request, across retries
 }
 
-// New returns a Balancer for the given backend URLs, such as
-// "http://127.0.0.1:8080".
+// New returns a Balancer for cfg. It returns an error if cfg is invalid: no
+// backends, a malformed backend URL, a negative setting or weight, or an
+// unknown algorithm.
 func New(cfg Config) (*Balancer, error) {
 	cfg = cfg.withDefaults()
 
@@ -49,12 +50,22 @@ func New(cfg Config) (*Balancer, error) {
 		requestTimeout: cfg.RequestTimeout,
 		picker:         p,
 	}
-	for _, addr := range cfg.Backends {
-		u, err := url.Parse(addr)
+	for _, be := range cfg.Backends {
+		u, err := url.Parse(be.URL)
 		if err != nil {
-			return nil, fmt.Errorf("parse backend %q: %w", addr, err)
+			return nil, fmt.Errorf("parse backend %q: %w", be.URL, err)
 		}
-		lb.backends = append(lb.backends, newBackend(u, transport, int32(cfg.MaxFailures)))
+		if u.Scheme == "" || u.Host == "" {
+			return nil, fmt.Errorf("backend %q: want a URL like http://host:port", be.URL)
+		}
+		weight := be.Weight
+		switch {
+		case weight == 0:
+			weight = 1
+		case weight < 0:
+			return nil, fmt.Errorf("backend %q: weight must not be negative", be.URL)
+		}
+		lb.backends = append(lb.backends, newBackend(u, transport, int32(cfg.MaxFailures), weight))
 	}
 	return lb, nil
 }

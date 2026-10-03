@@ -20,14 +20,27 @@ const (
 	// LeastConnections sends each request to the backend with the fewest
 	// requests in progress, which suits traffic where some requests are slow.
 	LeastConnections Algorithm = "least-connections"
+	// WeightedRoundRobin sends each backend a share of requests in proportion
+	// to its Weight, spread evenly rather than in bursts.
+	WeightedRoundRobin Algorithm = "weighted-round-robin"
 )
+
+// Backend is one server to balance across.
+type Backend struct {
+	// URL is the server's address, such as "http://127.0.0.1:8080".
+	URL string
+
+	// Weight is the backend's share of traffic under WeightedRoundRobin: a
+	// backend with weight 3 gets three times the requests of one with
+	// weight 1. Other algorithms ignore it. Default 1.
+	Weight int
+}
 
 // Config configures a Balancer. Only Backends is required; any other field
 // left at zero gets its default.
 type Config struct {
-	// Backends are the URLs of the servers to balance across, such as
-	// "http://127.0.0.1:8080".
-	Backends []string
+	// Backends are the servers to balance across.
+	Backends []Backend
 
 	// Algorithm chooses which backend gets each request. Default RoundRobin.
 	Algorithm Algorithm

@@ -3,6 +3,7 @@ package balancer
 import (
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 )
 
@@ -19,6 +20,8 @@ func newPicker(alg Algorithm) (picker, error) {
 		return &roundRobin{}, nil
 	case LeastConnections:
 		return &leastConnections{}, nil
+	case WeightedRoundRobin:
+		return &weightedRoundRobin{}, nil
 	default:
 		return nil, fmt.Errorf("unknown algorithm %q", alg)
 	}
@@ -54,5 +57,39 @@ func (lc *leastConnections) pick(candidates []*backend, r *http.Request) *backen
 		}
 	}
 
+	return best
+}
+
+// weightedRoundRobin is nginx's smooth weighted round robin. On each pick it
+// adds every candidate's weight to that candidate's current score, picks the
+// highest score, and subtracts the candidates' total weight from the winner.
+// Over a cycle each backend wins in proportion to its weight, and a winner
+// drops far enough that the others get their turns in between: weights 5, 1,
+// 1 give A A B A C A A rather than A A A A A B C.
+type weightedRoundRobin struct {
+	// mu makes each pick one step: it reads and updates several scores that
+	// must change together, which atomics can't do.
+	mu      sync.Mutex
+	current map[*backend]int // guarded by mu
+}
+
+func (w *weightedRoundRobin) pick(candidates []*backend, r *http.Request) *backend {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.current == nil {
+		w.current = make(map[*backend]int)
+	}
+
+	var best *backend
+	total := 0
+	for _, c := range candidates {
+		w.current[c] += c.weight
+		total += c.weight
+		if best == nil || w.current[c] > w.current[best] {
+			best = c
+		}
+	}
+	w.current[best] -= total
 	return best
 }

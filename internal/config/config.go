@@ -24,7 +24,7 @@ const (
 type Config struct {
 	Listen              string        `yaml:"listen"`
 	Algorithm           string        `yaml:"algorithm"`
-	Backends            []string      `yaml:"backends"`
+	Backends            []Backend     `yaml:"backends"`
 	HealthCheckInterval time.Duration `yaml:"health_check_interval"`
 	AttemptTimeout      time.Duration `yaml:"attempt_timeout"`
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
@@ -34,6 +34,43 @@ type Config struct {
 	// Unlike the other settings, empty doesn't mean a default: it means
 	// the admin server is off.
 	AdminListen string `yaml:"admin_listen"`
+}
+
+// Backend is one entry in the backends list. It can be written as a plain
+// URL, or as an object with a url and a weight:
+//
+//	backends:
+//	  - http://127.0.0.1:8080
+//	  - url: http://127.0.0.1:8081
+//	    weight: 3
+//
+// The plain form keeps config files from before weights existed working.
+type Backend struct {
+	URL    string `yaml:"url"`
+	Weight int    `yaml:"weight"`
+}
+
+// UnmarshalYAML accepts both forms of a backend entry.
+func (b *Backend) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		return value.Decode(&b.URL)
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: backend must be a URL or an object with url and weight", value.Line)
+	}
+
+	// The decoder's KnownFields setting doesn't reach inside a custom
+	// UnmarshalYAML, so check the keys here. Content alternates key, value.
+	for i := 0; i < len(value.Content); i += 2 {
+		if key := value.Content[i]; key.Value != "url" && key.Value != "weight" {
+			return fmt.Errorf("line %d: unknown backend field %q (want url or weight)", key.Line, key.Value)
+		}
+	}
+
+	// plain has Backend's fields but not its methods, so this Decode uses
+	// the default decoding instead of calling UnmarshalYAML forever.
+	type plain Backend
+	return value.Decode((*plain)(b))
 }
 
 // Load reads a YAML config file and fills in the defaults for the settings
@@ -73,8 +110,12 @@ func Load(path string) (Config, error) {
 
 // BalancerConfig returns the settings that configure the balancer itself.
 func (c Config) BalancerConfig() balancer.Config {
+	backends := make([]balancer.Backend, len(c.Backends))
+	for i, b := range c.Backends {
+		backends[i] = balancer.Backend{URL: b.URL, Weight: b.Weight}
+	}
 	return balancer.Config{
-		Backends:       c.Backends,
+		Backends:       backends,
 		Algorithm:      balancer.Algorithm(c.Algorithm),
 		AttemptTimeout: c.AttemptTimeout,
 		RequestTimeout: c.RequestTimeout,

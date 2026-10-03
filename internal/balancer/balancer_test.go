@@ -40,6 +40,15 @@ func hangingBackend(t *testing.T) string {
 	return srv.URL
 }
 
+// urls turns backend URLs into Backends with the default weight.
+func urls(addrs ...string) []Backend {
+	bs := make([]Backend, len(addrs))
+	for i, addr := range addrs {
+		bs[i] = Backend{URL: addr}
+	}
+	return bs
+}
+
 func newBalancer(t *testing.T, cfg Config) *Balancer {
 	t.Helper()
 	lb, err := New(cfg)
@@ -59,13 +68,17 @@ func send(lb *Balancer, method string) (int, string) {
 func TestNewErrors(t *testing.T) {
 	tests := map[string]Config{
 		"no backends": {},
-		"bad url":     {Backends: []string{"http://[::1"}},
+		"bad url":     {Backends: urls("http://[::1")},
+		"no scheme":   {Backends: urls("127.0.0.1:8080")},
+		"negative weight": {
+			Backends: []Backend{{URL: "http://127.0.0.1:1", Weight: -1}},
+		},
 		"negative timeout": {
-			Backends:       []string{"http://127.0.0.1:1"},
+			Backends:       urls("http://127.0.0.1:1"),
 			RequestTimeout: -time.Second,
 		},
 		"bad algorithm": {
-			Backends:  []string{"http://127.0.0.1:1"},
+			Backends:  urls("http://127.0.0.1:1"),
 			Algorithm: "fastest",
 		},
 	}
@@ -77,9 +90,9 @@ func TestNewErrors(t *testing.T) {
 }
 
 func TestRoundRobin(t *testing.T) {
-	lb := newBalancer(t, Config{Backends: []string{
+	lb := newBalancer(t, Config{Backends: urls(
 		namedBackend(t, "a"), namedBackend(t, "b"), namedBackend(t, "c"),
-	}})
+	)})
 
 	counts := map[string]int{}
 	for range 6 {
@@ -97,9 +110,9 @@ func TestRoundRobin(t *testing.T) {
 }
 
 func TestFailoverToHealthyBackend(t *testing.T) {
-	lb := newBalancer(t, Config{Backends: []string{
+	lb := newBalancer(t, Config{Backends: urls(
 		namedBackend(t, "a"), deadBackend(t), namedBackend(t, "c"),
-	}})
+	)})
 
 	for i := range 6 {
 		if code, body := send(lb, http.MethodGet); code != http.StatusOK {
@@ -113,7 +126,7 @@ func TestFailoverToHealthyBackend(t *testing.T) {
 
 func TestPostIsNotRetried(t *testing.T) {
 	// Round robin starts at index 0, so the first request hits the dead backend.
-	lb := newBalancer(t, Config{Backends: []string{deadBackend(t), namedBackend(t, "b")}})
+	lb := newBalancer(t, Config{Backends: urls(deadBackend(t), namedBackend(t, "b"))})
 
 	if code, _ := send(lb, http.MethodPost); code != http.StatusBadGateway {
 		t.Errorf("status = %d, want %d", code, http.StatusBadGateway)
@@ -121,7 +134,7 @@ func TestPostIsNotRetried(t *testing.T) {
 }
 
 func TestAllBackendsDown(t *testing.T) {
-	lb := newBalancer(t, Config{Backends: []string{deadBackend(t), deadBackend(t)}})
+	lb := newBalancer(t, Config{Backends: urls(deadBackend(t), deadBackend(t))})
 
 	// The first request tries both backends and marks them down.
 	if code, _ := send(lb, http.MethodGet); code != http.StatusBadGateway {
@@ -135,7 +148,7 @@ func TestAllBackendsDown(t *testing.T) {
 
 func TestTimeoutsMarkDownAfterMaxFailures(t *testing.T) {
 	lb := newBalancer(t, Config{
-		Backends:       []string{hangingBackend(t), namedBackend(t, "b")},
+		Backends:       urls(hangingBackend(t), namedBackend(t, "b")),
 		AttemptTimeout: 50 * time.Millisecond,
 		MaxFailures:    3,
 	})
@@ -160,7 +173,7 @@ func TestTimeoutsMarkDownAfterMaxFailures(t *testing.T) {
 }
 
 func TestSuccessResetsFailures(t *testing.T) {
-	lb := newBalancer(t, Config{Backends: []string{namedBackend(t, "a")}})
+	lb := newBalancer(t, Config{Backends: urls(namedBackend(t, "a"))})
 	lb.backends[0].failures.Store(2)
 
 	send(lb, http.MethodGet)
@@ -171,7 +184,7 @@ func TestSuccessResetsFailures(t *testing.T) {
 
 func TestRequestDeadline(t *testing.T) {
 	lb := newBalancer(t, Config{
-		Backends:       []string{hangingBackend(t), hangingBackend(t)},
+		Backends:       urls(hangingBackend(t), hangingBackend(t)),
 		AttemptTimeout: time.Second,
 		RequestTimeout: 100 * time.Millisecond,
 	})
@@ -195,7 +208,7 @@ func TestRequestDeadline(t *testing.T) {
 }
 
 func TestClientGivingUpIsNotCounted(t *testing.T) {
-	lb := newBalancer(t, Config{Backends: []string{hangingBackend(t)}})
+	lb := newBalancer(t, Config{Backends: urls(hangingBackend(t))})
 
 	// A disconnecting client cancels the request's context. Use cancel, not a
 	// timeout: a timeout ends with DeadlineExceeded, which is the balancer's
@@ -213,7 +226,7 @@ func TestClientGivingUpIsNotCounted(t *testing.T) {
 }
 
 func TestActiveCountsRequestsInProgress(t *testing.T) {
-	lb := newBalancer(t, Config{Backends: []string{hangingBackend(t)}})
+	lb := newBalancer(t, Config{Backends: urls(hangingBackend(t))})
 	b := lb.backends[0]
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -247,7 +260,7 @@ func TestHealthChecks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	setHealthy := func(ok bool) { <-healthy; healthy <- ok }
 
-	lb := newBalancer(t, Config{Backends: []string{srv.URL}})
+	lb := newBalancer(t, Config{Backends: urls(srv.URL)})
 	b := lb.backends[0]
 
 	ctx, cancel := context.WithCancel(context.Background())

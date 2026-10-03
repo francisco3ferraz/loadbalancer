@@ -494,6 +494,29 @@ func TestHealthChecks(t *testing.T) {
 	}
 }
 
+// TestHealthChecksRunConcurrently checks that a round of health checks takes
+// about one check timeout, not one per backend: three hanging backends must
+// not make a round take three times as long.
+func TestHealthChecksRunConcurrently(t *testing.T) {
+	lb := newBalancer(t, Config{
+		Backends: urls(hangingBackend(t), hangingBackend(t), hangingBackend(t)),
+	})
+	timeout := lb.client.Timeout
+
+	start := time.Now()
+	lb.checkAll(context.Background())
+	elapsed := time.Since(start)
+
+	if elapsed < timeout || elapsed > timeout+timeout/2 {
+		t.Errorf("round took %s, want about %s (one check timeout)", elapsed, timeout)
+	}
+	for i, b := range lb.backends {
+		if b.alive.Load() {
+			t.Errorf("backend %d still alive after its check timed out", i)
+		}
+	}
+}
+
 // TestHealthPath checks that health checks request the configured path,
 // joined onto the backend's URL (including any base path it has).
 func TestHealthPath(t *testing.T) {

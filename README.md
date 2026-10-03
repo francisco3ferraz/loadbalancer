@@ -10,7 +10,8 @@ a real failure mode, and each one is covered by tests.
 
 - **Four algorithms:** round robin, least connections, weighted round robin
   (nginx's smooth variant), and weighted least connections.
-- **Health checks:** active checks on a configurable path, plus passive
+- **Health checks:** active checks on a configurable path, run on every
+  backend at once so hanging backends don't slow down the rest, plus passive
   detection when real requests fail.
 - **Failure handling:** a backend that refuses connections is marked down
   immediately; one that times out is marked down after several failures in a

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -20,9 +21,23 @@ func (lb *Balancer) RunHealthChecks(ctx context.Context, interval time.Duration)
 		case <-ticker.C:
 		}
 
-		for _, b := range lb.backends {
+		lb.checkAll(ctx)
+	}
+}
+
+// checkAll checks every backend once, all at the same time, and marks each
+// up or down. It returns when every check has finished, so a round takes as
+// long as the slowest check, and the next round can't start before then.
+func (lb *Balancer) checkAll(ctx context.Context) {
+	var wg sync.WaitGroup
+
+	for _, b := range lb.backends {
+		check := func() {
 			alive := lb.isHealthy(ctx, b)
-			if alive != b.alive.Load() {
+
+			// Swap, not Load then Store: a failing request may mark the
+			// backend down in between, and the log would then be wrong.
+			if b.alive.Swap(alive) != alive {
 				if alive {
 					b.failures.Store(0)
 					log.Printf("%s is up", b.url.Host)
@@ -30,9 +45,12 @@ func (lb *Balancer) RunHealthChecks(ctx context.Context, interval time.Duration)
 					log.Printf("%s is down", b.url.Host)
 				}
 			}
-			b.alive.Store(alive)
 		}
+
+		wg.Go(check)
 	}
+
+	wg.Wait()
 }
 
 func (lb *Balancer) isHealthy(ctx context.Context, b *backend) bool {

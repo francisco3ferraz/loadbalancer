@@ -84,9 +84,21 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failed))
 
 	if !isUpgrade(r) {
-		timeoutCtx, cancel := context.WithTimeout(r.Context(), lb.requestTimeout)
-		defer cancel()
-		r = r.WithContext(timeoutCtx)
+		// A timer instead of WithTimeout, so the deadline can be lifted when
+		// the response turns out to be a stream. The cause tells the timer
+		// apart from the client giving up, which also cancels the context.
+		cancelCtx, cancel := context.WithCancelCause(r.Context())
+		defer cancel(nil)
+
+		timer := time.AfterFunc(lb.requestTimeout, func() { cancel(context.DeadlineExceeded) })
+		defer timer.Stop()
+
+		r = r.WithContext(context.WithValue(cancelCtx, streamKey{}, func() {
+			timer.Stop()
+			// Also lift the server's WriteTimeout. If w can't, the stream is
+			// cut at that timeout, as before, so the error can be ignored.
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+		}))
 	}
 
 	candidates := lb.aliveBackends()
@@ -102,7 +114,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		switch ctxErr := r.Context().Err(); {
+		switch ctxErr := context.Cause(r.Context()); {
 		case errors.Is(ctxErr, context.DeadlineExceeded):
 			http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
 			return

@@ -20,6 +20,9 @@ a real failure mode, and each one is covered by tests.
   them could have side effects.
 - **Timeouts:** per attempt, per request across all retries (giving a `504`),
   and on the server itself against slow clients.
+- **Long-lived connections:** WebSockets (and any other `Upgrade`) and
+  server-sent events stay open for as long as both ends want, exempt from the
+  request deadline and the server's write timeout.
 - **Graceful shutdown:** on Ctrl+C or `SIGTERM`, requests in progress finish
   before the process exits. A second Ctrl+C exits immediately.
 - **Stats:** an optional admin server with a JSON `/stats` endpoint.
@@ -55,7 +58,7 @@ Settings come from a YAML file. Only `backends` is required. The shipped
 | `health_path` | `/health` | Path requested by health checks; `200` means healthy |
 | `health_check_interval` | `5s` | How often each backend is checked |
 | `attempt_timeout` | `5s` | How long one backend has to start answering |
-| `request_timeout` | `10s` | Total time for a request, across all retries |
+| `request_timeout` | `10s` | Total time for a request, across all retries; not applied to upgrades or event streams |
 | `max_failures` | `3` | Failures in a row that mark a backend down |
 | `admin_listen` | off | Address of the admin server, e.g. `127.0.0.1:9000` |
 
@@ -141,6 +144,7 @@ go run ./cmd/fakebackend -port 8081 -delay 30s        # hangs: tests timeouts
 go run ./cmd/fakebackend -port 8081 -error-rate 0.2   # 20% of requests return 500
 curl -X POST localhost:8081/admin/health/down          # fail health checks, keep serving
 curl 'localhost:8000/slow?d=3s'                         # a slow request through the balancer
+curl -N localhost:8000/stream                           # server-sent events, one a second
 ```
 
 `scripts/run-backends.sh` starts several at once (`BACKEND_FLAGS` passes flags
@@ -166,6 +170,11 @@ scripts/             run-backends.sh
   mark a backend down at once; timeouts need several in a row.
 - **One total deadline per request.** Without it, retries would multiply the
   waiting time: 3 backends × a 5s timeout would be 15s.
+- **Long-lived connections are recognised, not configured.** An upgrade is
+  known from its request (`Connection: Upgrade` plus an `Upgrade` header), so
+  it never gets a deadline. An event stream is only known from its response
+  (`Content-Type: text/event-stream`), so the deadline is a timer that's
+  stopped when such a response arrives, rather than a fixed `WithTimeout`.
 - **Load is counted locally.** Least connections uses the load balancer's own
   count of requests in progress, as nginx, HAProxy and Envoy do. Each instance
   therefore sees only its own traffic.
@@ -179,4 +188,6 @@ scripts/             run-backends.sh
 These are real load balancer features, deliberately left out of scope:
 TLS termination, HTTP/2 to backends, Prometheus metrics, structured logging,
 reloading the config without a restart, sticky sessions (consistent hashing),
-and latency-based algorithms.
+latency-based algorithms, and an idle timeout for long-lived connections: a
+WebSocket or stream whose backend goes silent stays open until one end closes
+it.

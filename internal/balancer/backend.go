@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -32,6 +33,11 @@ type backend struct {
 // handleError sets when an attempt fails.
 type failedKey struct{}
 
+// streamKey is the context key under which ServeHTTP stores a func() that
+// lifts the request deadline. modifyResponse calls it when the response is
+// a stream. Upgrades have no deadline, so they store nothing.
+type streamKey struct{}
+
 func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32, weight int) *backend {
 	b := &backend{
 		url:         u,
@@ -42,6 +48,7 @@ func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32, weig
 	b.alive.Store(true)
 	b.proxy.Transport = transport
 	b.proxy.ErrorHandler = b.handleError
+	b.proxy.ModifyResponse = b.modifyResponse
 	return b
 }
 
@@ -76,6 +83,22 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 	if dead && b.alive.CompareAndSwap(true, false) {
 		log.Printf("%s marked down: %v", b.url.Host, err)
 	}
+}
+
+// modifyResponse is the proxy's ModifyResponse hook, which runs when the
+// backend's response headers arrive. It lifts the request deadline for
+// server-sent events, which stay open for as long as the backend sends them.
+// It always returns nil: an error would make the proxy reply 502 instead.
+func (b *backend) modifyResponse(resp *http.Response) error {
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if mediaType == "text/event-stream" && err == nil {
+		stop, ok := resp.Request.Context().Value(streamKey{}).(func())
+		if ok {
+			stop()
+		}
+	}
+
+	return nil
 }
 
 // serve forwards one attempt to b, counting it in active for as long as it

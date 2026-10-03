@@ -67,6 +67,29 @@ func echoBackend(t *testing.T) string {
 	return srv.URL
 }
 
+// streamBackend starts a backend that sends n lines of the given content
+// type, one every interval, flushing each so it leaves at once.
+func streamBackend(t *testing.T, contentType string, n int, every time.Duration) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		rc := http.NewResponseController(w)
+		for i := 1; i <= n; i++ {
+			select {
+			case <-time.After(every):
+			case <-r.Context().Done():
+				return
+			}
+			fmt.Fprintf(w, "data: %d\n\n", i)
+			if rc.Flush() != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 // urls turns backend URLs into Backends with the default weight.
 func urls(addrs ...string) []Backend {
 	bs := make([]Backend, len(addrs))
@@ -347,6 +370,47 @@ func TestConnectionUpgradeAloneKeepsDeadline(t *testing.T) {
 
 	if rec.Code != http.StatusGatewayTimeout {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusGatewayTimeout)
+	}
+}
+
+// TestStreamOutlivesTimeouts checks that a server-sent event stream outlives
+// both the request deadline and the server's WriteTimeout, while a response
+// that's just as slow but isn't a stream is still cut off.
+func TestStreamOutlivesTimeouts(t *testing.T) {
+	const timeout = 100 * time.Millisecond
+	const n = 6 // events, sent every timeout/2, so they last 3 timeouts
+	tests := []struct {
+		contentType string
+		wantAll     bool
+	}{
+		{"text/event-stream", true},
+		{"text/event-stream; charset=utf-8", true},
+		{"text/plain", false},
+	}
+	for _, tt := range tests {
+		lb := newBalancer(t, Config{
+			Backends:       urls(streamBackend(t, tt.contentType, n, timeout/2)),
+			RequestTimeout: timeout,
+		})
+		srv := httptest.NewUnstartedServer(lb)
+		srv.Config.WriteTimeout = timeout
+		srv.Start()
+
+		resp, err := http.Get(srv.URL)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.contentType, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		srv.Close()
+
+		got := strings.Count(string(body), "data:")
+		if tt.wantAll && (err != nil || got != n) {
+			t.Errorf("%s: got %d of %d events, err %v; want all of them", tt.contentType, got, n, err)
+		}
+		if !tt.wantAll && err == nil && got == n {
+			t.Errorf("%s: got all %d events; want it cut off at the deadline", tt.contentType, n)
+		}
 	}
 }
 

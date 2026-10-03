@@ -29,7 +29,6 @@ func newPicker(alg Algorithm) (picker, error) {
 	}
 }
 
-// roundRobin takes the candidates in turn.
 type roundRobin struct {
 	counter atomic.Uint64
 }
@@ -69,9 +68,7 @@ func (lc *leastConnections) pick(candidates []*backend, r *http.Request) *backen
 // drops far enough that the others get their turns in between: weights 5, 1,
 // 1 give A A B A C A A rather than A A A A A B C.
 type weightedRoundRobin struct {
-	// mu makes each pick one step: it reads and updates several scores that
-	// must change together, which atomics can't do.
-	mu      sync.Mutex
+	mu      sync.Mutex       // a pick updates several scores together, which atomics can't
 	current map[*backend]int // guarded by mu
 }
 

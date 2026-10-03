@@ -31,6 +31,9 @@ a real failure mode, and each one is covered by tests.
   never finish on their own, so they hold the shutdown for its full limit
   (`request_timeout` + 5s) and are then cut; WebSockets are cut when the
   process exits.
+- **Config reload:** `kill -HUP <pid>` applies an edited config without
+  closing the port or failing a request; an invalid config is rejected and
+  the old one keeps running.
 - **Access log:** one structured line per request on stdout, with the backend
   that served it and how many were tried; errors stay on stderr.
 - **Stats:** an optional admin server with a JSON `/stats` endpoint.
@@ -155,6 +158,26 @@ With `admin_listen` set, `GET /stats` returns a snapshot of every backend:
 `requests` is attempts served in total. The endpoint shows internal addresses,
 so it runs on a separate port, which should stay on a loopback address.
 
+## Reloading the config
+
+Edit the config file, then send the process `SIGHUP`:
+
+```sh
+kill -HUP <pid>
+```
+
+The new config is checked first. If it's valid, new requests go to a balancer
+built from it, while requests already in progress finish on the old one, so
+none fail. If it isn't, the error is logged and the old config keeps running.
+
+A reload starts afresh: every backend begins alive, with its failure count and
+`/stats` counters at zero, and health checks restart on the new interval.
+
+Some settings are fixed once the process has started, so a reload that
+changes them is rejected as a whole: `listen`, `admin_listen`, `access_log`,
+and raising `request_timeout` above its value at startup (the server's own
+timeouts were sized from it). Restart to change these.
+
 ## Testing
 
 ```sh
@@ -212,14 +235,14 @@ scripts/             run-backends.sh
 - **The file format is separate from the internal config,** so either can
   change without breaking the other. Older files listing backends as plain URLs
   keep working.
-- **Bad configuration fails at startup,** never while serving traffic.
+- **Bad configuration fails at startup,** never while serving traffic; a bad
+  config on reload is rejected and the old one keeps serving.
 
 ## Not included
 
 These are real load balancer features, deliberately left out of scope:
 TLS termination, HTTP/2 to backends, Prometheus metrics, structured error
-logs (only the access log is structured), reloading the config without a
-restart, sticky sessions (consistent hashing), latency-based algorithms, and an
+logs (only the access log is structured), sticky sessions (consistent hashing), latency-based algorithms, and an
 idle timeout for long-lived connections (a WebSocket or stream whose backend
 goes silent stays open until one end closes it), and closing them cleanly on
 shutdown.

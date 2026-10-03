@@ -29,7 +29,6 @@ func (b *logBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-// lines returns every logged line, decoded from JSON.
 func (b *logBuffer) lines(t *testing.T) []map[string]any {
 	t.Helper()
 	b.mu.Lock()
@@ -45,8 +44,6 @@ func (b *logBuffer) lines(t *testing.T) []map[string]any {
 	return lines
 }
 
-// loggedBalancer wraps lb in AccessLog with a JSON logger, so the test can
-// read the fields back.
 func loggedBalancer(lb *Balancer) (http.Handler, *logBuffer) {
 	logs := &logBuffer{}
 	return AccessLog(lb, slog.New(slog.NewJSONHandler(logs, nil))), logs
@@ -61,7 +58,6 @@ func host(t *testing.T, rawURL string) string {
 	return u.Host
 }
 
-// checkFields fails the test for every field of got that doesn't match want.
 // JSON numbers decode as float64, so want uses float64 for them.
 func checkFields(t *testing.T, got map[string]any, want map[string]any) {
 	t.Helper()
@@ -116,8 +112,6 @@ func TestAccessLog(t *testing.T) {
 	}
 }
 
-// TestAccessLogNoBackends checks the line for a request no backend was tried
-// for: the backend is empty and attempts is 0.
 func TestAccessLogNoBackends(t *testing.T) {
 	lb := newBalancer(t, Config{Backends: urls(namedBackend(t, "a"))})
 	lb.backends[0].alive.Store(false)

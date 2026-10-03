@@ -14,8 +14,8 @@ type accessKey struct{}
 // access is what AccessLog can't see from outside the balancer.
 type access struct {
 	backend  string // host of the last backend tried, empty if none was
-	attempts int    // backends tried, more than 1 when retried
-	upgraded bool   // the backend switched protocols, as for a WebSocket
+	attempts int
+	upgraded bool // the backend switched protocols, as for a WebSocket
 }
 
 // accessFrom returns the request's *access, or nil when the request isn't
@@ -25,9 +25,7 @@ func accessFrom(ctx context.Context) *access {
 	return a
 }
 
-// AccessLog wraps a Balancer so that every request it handles is logged to
-// logger once it's finished: method, path, status, response size, duration,
-// client address, and the backend that served it.
+// AccessLog logs every request to logger once it's finished.
 //
 // A status of 0 means no response was sent, because the client gave up
 // first. Upgraded connections are logged as 101 when they close, so their
@@ -62,8 +60,8 @@ func AccessLog(next http.Handler, logger *slog.Logger) http.Handler {
 // statusRecorder remembers the status code and body size a handler sent.
 type statusRecorder struct {
 	http.ResponseWriter
-	status int   // first final (2xx-5xx) status written, 0 if none yet
-	bytes  int64 // body bytes written
+	status int // first final (2xx-5xx) status written, 0 if none yet
+	bytes  int64
 }
 
 func (r *statusRecorder) WriteHeader(code int) {

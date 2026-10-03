@@ -25,9 +25,8 @@ func (lb *Balancer) RunHealthChecks(ctx context.Context, interval time.Duration)
 	}
 }
 
-// checkAll checks every backend once, all at the same time, and marks each
-// up or down. It returns when every check has finished, so a round takes as
-// long as the slowest check, and the next round can't start before then.
+// checkAll checks every backend concurrently and returns once all are done,
+// so rounds never overlap.
 func (lb *Balancer) checkAll(ctx context.Context) {
 	var wg sync.WaitGroup
 

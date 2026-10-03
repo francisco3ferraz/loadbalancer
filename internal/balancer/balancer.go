@@ -47,8 +47,7 @@ func New(cfg Config) (*Balancer, error) {
 		return nil, err
 	}
 
-	// One transport shared by every proxy, so they share a connection pool.
-	// Cloning keeps the default settings; only the timeouts change.
+	// Shared by every proxy, so they share a connection pool.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = cfg.AttemptTimeout
@@ -105,8 +104,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		r = r.WithContext(context.WithValue(cancelCtx, streamKey{}, func() {
 			timer.Stop()
-			// Also lift the server's WriteTimeout. If w can't, the stream is
-			// cut at that timeout, as before, so the error can be ignored.
+			// If w can't lift the WriteTimeout, the stream is cut at it.
 			_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 		}))
 	}

@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// namedBackend starts a backend that answers every request with its name.
 func namedBackend(t *testing.T, name string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,8 +23,7 @@ func namedBackend(t *testing.T, name string) string {
 	return srv.URL
 }
 
-// deadBackend returns the URL of a server that has already shut down, so
-// connections to it are refused, like a crashed process.
+// deadBackend returns the URL of a closed server, so connections are refused.
 func deadBackend(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.NotFoundHandler())
@@ -91,7 +89,6 @@ func streamBackend(t *testing.T, contentType string, n int, every time.Duration)
 	return srv.URL
 }
 
-// urls turns backend URLs into Backends with the default weight.
 func urls(addrs ...string) []Backend {
 	bs := make([]Backend, len(addrs))
 	for i, addr := range addrs {
@@ -109,7 +106,6 @@ func newBalancer(t *testing.T, cfg Config) *Balancer {
 	return lb
 }
 
-// send makes one request through lb and returns the status code and body.
 func send(lb *Balancer, method string) (int, string) {
 	rec := httptest.NewRecorder()
 	lb.ServeHTTP(rec, httptest.NewRequest(method, "/", nil))
@@ -228,11 +224,9 @@ func TestRequestWithBodyIsNotRetried(t *testing.T) {
 func TestAllBackendsDown(t *testing.T) {
 	lb := newBalancer(t, Config{Backends: urls(deadBackend(t), deadBackend(t))})
 
-	// The first request tries both backends and marks them down.
 	if code, _ := send(lb, http.MethodGet); code != http.StatusBadGateway {
 		t.Errorf("first request: status = %d, want %d", code, http.StatusBadGateway)
 	}
-	// Now none are alive, so nothing is tried.
 	if code, _ := send(lb, http.MethodGet); code != http.StatusServiceUnavailable {
 		t.Errorf("second request: status = %d, want %d", code, http.StatusServiceUnavailable)
 	}
@@ -323,8 +317,6 @@ func TestIsUpgrade(t *testing.T) {
 	}
 }
 
-// TestUpgradeOutlivesRequestDeadline checks that an upgraded connection, such
-// as a WebSocket, keeps working after the request deadline has passed.
 func TestUpgradeOutlivesRequestDeadline(t *testing.T) {
 	const timeout = 100 * time.Millisecond
 	lb := newBalancer(t, Config{
@@ -419,9 +411,6 @@ func TestStreamOutlivesTimeouts(t *testing.T) {
 	}
 }
 
-// TestBodySizeLimit checks that a request declaring a body over the limit is
-// rejected with a 413 before it reaches any backend, while one exactly at
-// the limit goes through.
 func TestBodySizeLimit(t *testing.T) {
 	const limit = 10
 	var called atomic.Bool

@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// newBackends returns n backends with the given numbers of requests in
-// progress. pick only reads active, so they need no URL or proxy.
+// pick only reads active, so these backends need no URL or proxy.
 func newBackends(active ...int64) []*backend {
 	bs := make([]*backend, len(active))
 	for i, n := range active {
@@ -56,8 +55,6 @@ func TestLeastConnectionsSpreadsTies(t *testing.T) {
 	}
 }
 
-// TestLeastConnectionsAvoidsBusyBackend checks the picker end to end: while
-// one backend is busy with a slow request, new requests go to the other.
 func TestLeastConnectionsAvoidsBusyBackend(t *testing.T) {
 	lb := newBalancer(t, Config{
 		Backends:       urls(hangingBackend(t), namedBackend(t, "b")),
@@ -96,7 +93,6 @@ func indexOf(bs []*backend, b *backend) int {
 	return -1
 }
 
-// weighted returns backends with the given weights.
 func weighted(weights ...int) []*backend {
 	bs := make([]*backend, len(weights))
 	for i, w := range weights {
@@ -105,7 +101,6 @@ func weighted(weights ...int) []*backend {
 	return bs
 }
 
-// pickIndexes makes n picks and returns the index in bs of each one.
 func pickIndexes(p picker, bs []*backend, n int) []int {
 	got := make([]int, n)
 	for i := range n {
@@ -184,8 +179,6 @@ func TestWeightedRoundRobinConcurrent(t *testing.T) {
 	}
 }
 
-// TestWeightedRoundRobinThroughBalancer checks weights flow from Config to
-// the picker.
 func TestWeightedRoundRobinThroughBalancer(t *testing.T) {
 	lb := newBalancer(t, Config{
 		Backends: []Backend{
@@ -205,8 +198,7 @@ func TestWeightedRoundRobinThroughBalancer(t *testing.T) {
 	}
 }
 
-// loaded returns backends with the given requests in progress and weights,
-// as active, weight pairs.
+// loaded takes (active, weight) pairs.
 func loaded(pairs ...[2]int) []*backend {
 	bs := make([]*backend, len(pairs))
 	for i, p := range pairs {

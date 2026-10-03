@@ -20,13 +20,8 @@ type backend struct {
 	active   atomic.Int64
 	requests atomic.Uint64
 
-	// maxFailures is how many failures in a row (other than connection
-	// errors) mark the backend down.
-	maxFailures int32
-
-	// weight is the backend's share of traffic under weighted round robin.
-	// It never changes after creation, so it needs no synchronisation.
-	weight int
+	maxFailures int32 // in a row; connection errors mark it down at once
+	weight      int   // never changes, so it needs no synchronisation
 }
 
 // failedKey is the context key under which ServeHTTP stores a *error that

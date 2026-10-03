@@ -35,8 +35,7 @@ type Config struct {
 	HealthPath          string        `yaml:"health_path"`
 	MaxBodySize         ByteSize      `yaml:"max_body_size"`
 
-	// AccessLog turns the access log on or off. It's a pointer so that
-	// leaving it out can mean on, the default, while false turns it off.
+	// A pointer, so leaving it out can mean on while false turns it off.
 	AccessLog *bool `yaml:"access_log"`
 
 	// AdminListen is the address of the admin server, which serves /stats.
@@ -112,8 +111,6 @@ func (s *ByteSize) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// parseByteSize parses a whole, non-negative number of bytes with an
-// optional unit.
 func parseByteSize(text string) (int64, error) {
 	num, unit := strings.TrimSpace(text), int64(1)
 	for _, u := range byteUnits {

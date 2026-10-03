@@ -172,8 +172,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Without flushing, the events would sit in the server's buffer and reach
-	// the client in one lump, or not until the response ends.
+	// Unflushed, events would reach the client in one lump.
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Backend", s.name)
@@ -207,8 +206,7 @@ func (s *server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hijack takes the connection away from the HTTP server: from here on
-	// it's a plain TCP stream, and the handler must write the 101 itself.
+	// After Hijack, the handler must write the 101 itself.
 	conn, brw, err := http.NewResponseController(w).Hijack()
 	if err != nil {
 		http.Error(w, "hijack: "+err.Error(), http.StatusInternalServerError)
@@ -294,8 +292,7 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }
 
-// logRequests logs one line per request. X-Forwarded-For is included when
-// present, which shows the real client behind the load balancer.
+// logRequests logs one line per request.
 func logRequests(name string, logHealth bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

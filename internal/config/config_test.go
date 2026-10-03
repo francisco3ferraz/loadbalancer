@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-// writeConfig writes content to a config file in a temporary directory that
-// is deleted when the test ends, and returns its path.
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -157,7 +155,6 @@ backends:
 		t.Errorf("backends = %+v, want %+v", got.Backends, want)
 	}
 
-	// Weights carry through to the balancer's config.
 	if w := got.BalancerConfig().Backends[1].Weight; w != 3 {
 		t.Errorf("balancer weight = %d, want 3", w)
 	}

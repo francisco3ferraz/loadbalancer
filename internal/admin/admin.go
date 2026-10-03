@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/http/pprof"
 
 	"github.com/francisco3ferraz/loadbalancer/internal/balancer"
 )
@@ -15,10 +16,11 @@ type statsSource interface {
 }
 
 // Handler returns the admin endpoints, reading stats from src. It exposes
-// internal backend addresses, so serve it only where clients can't reach it,
-// such as on a loopback address.
+// internal backend addresses and profiles, so serve it only where clients
+// can't reach it, such as on a loopback address.
 //
-//	GET /stats   JSON snapshot of every backend (see balancer.Stats)
+//	GET /stats         JSON snapshot of every backend (see balancer.Stats)
+//	GET /debug/pprof/  runtime profiles for go tool pprof
 func Handler(src statsSource) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, _ *http.Request) {
@@ -29,5 +31,13 @@ func Handler(src statsSource) http.Handler {
 			log.Printf("admin: encode stats: %v", err)
 		}
 	})
+
+	// Registered by hand: importing net/http/pprof for its side effect only
+	// adds them to http.DefaultServeMux.
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
 	return mux
 }

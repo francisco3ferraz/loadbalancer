@@ -73,3 +73,13 @@ func TestStatsRejectsOtherMethods(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 }
+
+func TestPprof(t *testing.T) {
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/heap", "/debug/pprof/cmdline"} {
+		rec := httptest.NewRecorder()
+		Handler(testStats).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want %d", path, rec.Code, http.StatusOK)
+		}
+	}
+}

@@ -215,3 +215,7 @@ logs (only the access log is structured), reloading the config without a
 restart, sticky sessions (consistent hashing), latency-based algorithms, and an
 idle timeout for long-lived connections: a WebSocket or stream whose backend
 goes silent stays open until one end closes it.
+
+## License
+
+[MIT](LICENSE)

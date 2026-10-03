@@ -240,11 +240,11 @@ a realistic workload.
 
 | Setup | Requests/sec | p50 | p99 |
 |---|---|---|---|
-| Direct to one backend | 240,563 | 136µs | 1.22ms |
-| Load balancer, round-robin | 31,440 | 1.41ms | 4.14ms |
-| Load balancer, least-connections | 29,707 | 1.47ms | 4.37ms |
-| Load balancer, weighted-round-robin | 31,193 | 1.42ms | 4.15ms |
-| Load balancer, weighted-least-connections | 29,569 | 1.48ms | 4.41ms |
+| Direct to one backend | 243,251 | 134µs | 1.18ms |
+| Load balancer, round-robin | 60,900 | 677µs | 2.55ms |
+| Load balancer, least-connections | 61,297 | 667µs | 2.38ms |
+| Load balancer, weighted-round-robin | 60,885 | 677µs | 2.56ms |
+| Load balancer, weighted-least-connections | 59,528 | 686µs | 2.50ms |
 
 To reproduce (requires `wrk`; `RUNS`, `DURATION`, `CONNECTIONS` and `THREADS`
 can be overridden):
@@ -253,25 +253,39 @@ can be overridden):
 scripts/bench.sh
 ```
 
-What the numbers show:
+What changed the numbers, each measured on its own with round robin:
 
-- **A second hop is expensive next to a trivial backend.** Each request is
-  parsed twice and crosses four sockets instead of two. A CPU profile under
-  load puts about a quarter of the load balancer's time in socket reads and
-  writes, a fifth in memory allocation, and a tenth in garbage collection; the
-  load balancer's own code is about 6%. With all processes sharing 12 threads,
-  the machine is saturated, which widens the gap further.
-- **The algorithms cost about the same.** The least-connections variants are
-  about 5% slower, as each pick reads every backend's in-progress counter, and
-  identical backends give them nothing to gain.
-- **Connection reuse mattered most.** Go's default transport keeps only 2 idle
-  connections per backend, so under load most requests opened a new one: about
-  42,000 sockets piled up in `TIME_WAIT`, and round robin managed 21,000
-  requests/sec at a p50 of 2.15ms. Keeping up to 100 idle connections per
-  backend raised that by half.
-- **wrk is closed-loop:** each connection waits for a response before sending
-  the next request, so a stall delays the requests that would have measured
-  it, and p99 can look better than it is (coordinated omission).
+| Change | Requests/sec | p50 | Gain |
+|---|---|---|---|
+| Go's defaults | 21,086 | 2.15ms | |
+| Keep up to 100 idle connections per backend | 31,276 | 1.43ms | +48% |
+| Reuse response copy buffers (`ReverseProxy.BufferPool`) | 52,479 | 778µs | +68% |
+| `GOGC=400` | 59,612 | 692µs | +14% |
+| Profile-guided optimization (`default.pgo`) | 60,292 | 682µs | +1% |
+
+- **Connection reuse.** Go's default transport keeps only 2 idle connections
+  per backend, so under load most requests opened a new one, and about 42,000
+  sockets piled up in `TIME_WAIT`.
+- **Buffer reuse.** Without a pool, `ReverseProxy` allocates a 32KB buffer to
+  copy every response body: about 1GB/s of garbage at 30,000 requests/sec,
+  which the allocator has to zero and the garbage collector has to free.
+- **`GOGC=400`** lets the heap grow to five times its live size between
+  collections instead of twice. Memory under load went from about 25MB to
+  43MB. The program sets it unless the `GOGC` environment variable is set.
+- **PGO** uses `cmd/loadbalancer/default.pgo`, a CPU profile taken under this
+  benchmark, which `go build` picks up automatically. The gain is small but
+  repeated across runs: most of the time is spent in the kernel and runtime,
+  which the profile can't optimize.
+
+What's left is the cost of a second hop. Each request is parsed twice and
+crosses four sockets instead of two: a CPU profile puts about a third of the
+load balancer's time in socket reads and writes, and the load balancer's own
+code at about 5%. All processes share 12 threads, so the machine is
+saturated, which widens the gap. The algorithms cost the same within noise.
+
+wrk is closed-loop: each connection waits for a response before sending the
+next request, so a stall delays the requests that would have measured it, and
+p99 can look better than it is (coordinated omission).
 
 To profile, set `admin_listen` and, under load:
 

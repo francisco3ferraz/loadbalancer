@@ -1,9 +1,11 @@
 package balancer
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +42,26 @@ func hangingBackend(t *testing.T) string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
 		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// echoBackend starts a backend that accepts a protocol upgrade and then
+// echoes back every byte it receives, like the fake backend's /ws.
+func echoBackend(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, brw, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		defer conn.Close()
+		fmt.Fprintf(brw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: %s\r\n\r\n", r.Header.Get("Upgrade"))
+		if brw.Flush() == nil {
+			io.Copy(conn, brw)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
@@ -246,6 +268,85 @@ func TestRequestDeadline(t *testing.T) {
 		if b.failures.Load() != 0 || !b.alive.Load() {
 			t.Errorf("backend %d: failures = %d, alive = %v; want 0, true", i, b.failures.Load(), b.alive.Load())
 		}
+	}
+}
+
+func TestIsUpgrade(t *testing.T) {
+	tests := []struct {
+		name string
+		h    http.Header
+		want bool
+	}{
+		{"websocket", http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"}}, true},
+		{"token in a list", http.Header{"Connection": {"keep-alive, Upgrade"}, "Upgrade": {"websocket"}}, true},
+		{"any case", http.Header{"Connection": {"UPGRADE"}, "Upgrade": {"websocket"}}, true},
+		{"second header line", http.Header{"Connection": {"keep-alive", "upgrade"}, "Upgrade": {"websocket"}}, true},
+		{"no Upgrade header", http.Header{"Connection": {"upgrade"}}, false},
+		{"no Connection token", http.Header{"Connection": {"keep-alive"}, "Upgrade": {"websocket"}}, false},
+		{"token as substring", http.Header{"Connection": {"upgrades"}, "Upgrade": {"websocket"}}, false},
+		{"plain request", http.Header{}, false},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header = tt.h
+		if got := isUpgrade(r); got != tt.want {
+			t.Errorf("%s: isUpgrade = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestUpgradeOutlivesRequestDeadline checks that an upgraded connection, such
+// as a WebSocket, keeps working after the request deadline has passed.
+func TestUpgradeOutlivesRequestDeadline(t *testing.T) {
+	const timeout = 100 * time.Millisecond
+	lb := newBalancer(t, Config{
+		Backends:       urls(echoBackend(t)),
+		RequestTimeout: timeout,
+	})
+	// A real server, not a recorder: upgrading needs a connection to hijack.
+	srv := httptest.NewServer(lb)
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	io.WriteString(conn, "GET / HTTP/1.1\r\nHost: test\r\nConnection: keep-alive, Upgrade\r\nUpgrade: echo\r\n\r\n")
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+	}
+
+	time.Sleep(3 * timeout)
+	io.WriteString(conn, "ping\n")
+	if got, err := br.ReadString('\n'); err != nil || got != "ping\n" {
+		t.Errorf("echo after the deadline: got %q, %v; want %q", got, err, "ping\n")
+	}
+}
+
+// TestConnectionUpgradeAloneKeepsDeadline checks that a request can't escape
+// the deadline by claiming to upgrade without naming a protocol.
+func TestConnectionUpgradeAloneKeepsDeadline(t *testing.T) {
+	lb := newBalancer(t, Config{
+		Backends:       urls(hangingBackend(t)),
+		AttemptTimeout: time.Second,
+		RequestTimeout: 100 * time.Millisecond,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Connection", "upgrade")
+	rec := httptest.NewRecorder()
+	lb.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusGatewayTimeout)
 	}
 }
 

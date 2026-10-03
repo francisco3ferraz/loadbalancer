@@ -82,9 +82,12 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	failed := false
 
 	r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failed))
-	timeoutCtx, cancel := context.WithTimeout(r.Context(), lb.requestTimeout)
-	defer cancel()
-	r = r.WithContext(timeoutCtx)
+
+	if !isUpgrade(r) {
+		timeoutCtx, cancel := context.WithTimeout(r.Context(), lb.requestTimeout)
+		defer cancel()
+		r = r.WithContext(timeoutCtx)
+	}
 
 	candidates := lb.aliveBackends()
 	for len(candidates) > 0 {
@@ -140,4 +143,27 @@ func (lb *Balancer) aliveBackends() []*backend {
 func isRetryable(r *http.Request) bool {
 	safe := r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
 	return safe && r.ContentLength == 0 // -1 means a body of unknown length
+}
+
+// isUpgrade reports whether r asks to switch protocols, such as to a
+// WebSocket. Upgraded connections are long-lived, so they get no total
+// deadline. Both headers are required, as ReverseProxy requires them: a
+// Connection: upgrade alone would let any request escape the deadline.
+func isUpgrade(r *http.Request) bool {
+	if r.Header.Get("Upgrade") == "" {
+		return false
+	}
+
+	headers := r.Header.Values("Connection")
+	for _, header := range headers {
+		connections := strings.SplitSeq(header, ",")
+		for connection := range connections {
+			connection = strings.TrimSpace(connection)
+			if strings.EqualFold(connection, "Upgrade") {
+				return true
+			}
+		}
+	}
+
+	return false
 }

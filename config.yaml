@@ -22,7 +22,11 @@ backends:
   - http://127.0.0.1:8081
   - http://127.0.0.1:8082
 
-# How often each backend's /health endpoint is checked. Default 5s.
+# Path requested on every backend by health checks. A backend that answers
+# 200 is healthy. Default /health.
+health_path: /health
+
+# How often each backend's health path is checked. Default 5s.
 health_check_interval: 5s
 
 # How long one backend has to start answering before the attempt fails

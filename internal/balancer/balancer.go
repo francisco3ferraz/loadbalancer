@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,7 @@ type Balancer struct {
 	picker         picker
 	client         *http.Client  // for health checks
 	requestTimeout time.Duration // total time per request, across retries
+	healthPath     string        // path requested by health checks
 }
 
 // New returns a Balancer for cfg. It returns an error if cfg is invalid: no
@@ -33,6 +35,11 @@ func New(cfg Config) (*Balancer, error) {
 	}
 	if cfg.AttemptTimeout < 0 || cfg.RequestTimeout < 0 || cfg.MaxFailures < 0 {
 		return nil, errors.New("timeouts and max failures must not be negative")
+	}
+	// Only a path: a query or fragment would be escaped into the path by
+	// JoinPath and silently check the wrong URL.
+	if !strings.HasPrefix(cfg.HealthPath, "/") || strings.ContainsAny(cfg.HealthPath, "?#") {
+		return nil, fmt.Errorf("health path %q: want a path starting with /, such as /healthz", cfg.HealthPath)
 	}
 	p, err := newPicker(cfg.Algorithm)
 	if err != nil {
@@ -48,6 +55,7 @@ func New(cfg Config) (*Balancer, error) {
 	lb := &Balancer{
 		client:         &http.Client{Timeout: 2 * time.Second},
 		requestTimeout: cfg.RequestTimeout,
+		healthPath:     cfg.HealthPath,
 		picker:         p,
 	}
 	for _, be := range cfg.Backends {

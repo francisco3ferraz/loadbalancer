@@ -9,6 +9,7 @@ const DefaultRequestTimeout = 10 * time.Second
 const (
 	defaultAttemptTimeout = 5 * time.Second
 	defaultMaxFailures    = 3
+	defaultHealthPath     = "/health"
 )
 
 // Algorithm names a way of choosing which backend gets each request.
@@ -62,6 +63,12 @@ type Config struct {
 	// MaxFailures is how many failures in a row mark a backend down.
 	// Connection errors mark it down immediately. Default 3.
 	MaxFailures int
+
+	// HealthPath is the path health checks request on every backend, such
+	// as "/healthz". It's joined onto the backend's URL, so a backend at
+	// http://host/api is checked at http://host/api/healthz. A backend is
+	// healthy when it answers 200. Default "/health".
+	HealthPath string
 }
 
 // withDefaults returns a copy of c with unset fields filled in.
@@ -77,6 +84,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Algorithm == "" {
 		c.Algorithm = RoundRobin
+	}
+	if c.HealthPath == "" {
+		c.HealthPath = defaultHealthPath
 	}
 
 	return c

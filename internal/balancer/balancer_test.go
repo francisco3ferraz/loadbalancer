@@ -70,6 +70,14 @@ func TestNewErrors(t *testing.T) {
 		"no backends": {},
 		"bad url":     {Backends: urls("http://[::1")},
 		"no scheme":   {Backends: urls("127.0.0.1:8080")},
+		"health path without slash": {
+			Backends:   urls("http://127.0.0.1:1"),
+			HealthPath: "healthz",
+		},
+		"health path with query": {
+			Backends:   urls("http://127.0.0.1:1"),
+			HealthPath: "/health?full=1",
+		},
 		"negative weight": {
 			Backends: []Backend{{URL: "http://127.0.0.1:1", Weight: -1}},
 		},
@@ -292,6 +300,58 @@ func TestHealthChecks(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("RunHealthChecks did not return after its context was cancelled")
+	}
+}
+
+// TestHealthPath checks that health checks request the configured path,
+// joined onto the backend's URL (including any base path it has).
+func TestHealthPath(t *testing.T) {
+	tests := []struct {
+		name, base, healthPath, want string
+	}{
+		{"default", "", "", "/health"},
+		{"custom", "", "/healthz", "/healthz"},
+		{"under a base path", "/api", "/ready", "/api/ready"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case paths <- r.URL.Path:
+				default:
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			lb := newBalancer(t, Config{Backends: urls(srv.URL + tt.base), HealthPath: tt.healthPath})
+			if !lb.isHealthy(context.Background(), lb.backends[0]) {
+				t.Error("backend answering 200 reported unhealthy")
+			}
+			if got := <-paths; got != tt.want {
+				t.Errorf("health check requested %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHealthPathMismatch is the problem the setting solves: a backend that
+// only serves /healthz is marked down by checks on the default /health.
+func TestHealthPathMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	wrong := newBalancer(t, Config{Backends: urls(srv.URL)})
+	right := newBalancer(t, Config{Backends: urls(srv.URL), HealthPath: "/healthz"})
+	if wrong.isHealthy(context.Background(), wrong.backends[0]) {
+		t.Error("default /health: backend reported healthy, want unhealthy (it serves only /healthz)")
+	}
+	if !right.isHealthy(context.Background(), right.backends[0]) {
+		t.Error("health_path /healthz: backend reported unhealthy, want healthy")
 	}
 }
 

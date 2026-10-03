@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// RunHealthChecks checks every backend's /health endpoint each interval and
+// RunHealthChecks checks every backend's health path each interval and
 // marks it up or down. It blocks until ctx is cancelled, so run it with go.
 func (lb *Balancer) RunHealthChecks(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -36,7 +36,7 @@ func (lb *Balancer) RunHealthChecks(ctx context.Context, interval time.Duration)
 }
 
 func (lb *Balancer) isHealthy(ctx context.Context, b *backend) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.url.JoinPath("health").String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.url.JoinPath(lb.healthPath).String(), nil)
 	if err != nil {
 		return false
 	}

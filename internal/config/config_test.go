@@ -32,6 +32,7 @@ health_check_interval: 2s
 attempt_timeout: 1500ms
 request_timeout: 1m
 max_failures: 5
+health_path: /healthz
 admin_listen: "127.0.0.1:9001"
 `)
 	got, err := Load(path)
@@ -46,10 +47,14 @@ admin_listen: "127.0.0.1:9001"
 		AttemptTimeout:      1500 * time.Millisecond,
 		RequestTimeout:      time.Minute,
 		MaxFailures:         5,
+		HealthPath:          "/healthz",
 		AdminListen:         "127.0.0.1:9001",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if hp := got.BalancerConfig().HealthPath; hp != "/healthz" {
+		t.Errorf("balancer health path = %q, want %q", hp, "/healthz")
 	}
 }
 

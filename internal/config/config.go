@@ -29,6 +29,7 @@ type Config struct {
 	AttemptTimeout      time.Duration `yaml:"attempt_timeout"`
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
 	MaxFailures         int           `yaml:"max_failures"`
+	HealthPath          string        `yaml:"health_path"`
 
 	// AdminListen is the address of the admin server, which serves /stats.
 	// Unlike the other settings, empty doesn't mean a default: it means
@@ -120,6 +121,7 @@ func (c Config) BalancerConfig() balancer.Config {
 		AttemptTimeout: c.AttemptTimeout,
 		RequestTimeout: c.RequestTimeout,
 		MaxFailures:    c.MaxFailures,
+		HealthPath:     c.HealthPath,
 	}
 }
 

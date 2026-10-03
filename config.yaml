@@ -27,3 +27,9 @@ request_timeout: 10s
 # Failures in a row that mark a backend down. Connection errors mark it
 # down immediately. Default 3.
 max_failures: 3
+
+# Address of the admin server, which serves GET /stats (a JSON snapshot of
+# every backend). It shows internal addresses, so keep it on 127.0.0.1,
+# where only this machine can reach it; ":9000" would accept connections
+# from anywhere. Leave it out to turn the admin server off.
+admin_listen: "127.0.0.1:9000"

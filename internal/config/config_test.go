@@ -32,6 +32,7 @@ health_check_interval: 2s
 attempt_timeout: 1500ms
 request_timeout: 1m
 max_failures: 5
+admin_listen: "127.0.0.1:9001"
 `)
 	got, err := Load(path)
 	if err != nil {
@@ -45,6 +46,7 @@ max_failures: 5
 		AttemptTimeout:      1500 * time.Millisecond,
 		RequestTimeout:      time.Minute,
 		MaxFailures:         5,
+		AdminListen:         "127.0.0.1:9001",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
@@ -59,6 +61,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if got.Listen != defaultListen || got.HealthCheckInterval != defaultHealthCheckInterval {
 		t.Errorf("listen = %q, health_check_interval = %s; want %q, %s",
 			got.Listen, got.HealthCheckInterval, defaultListen, defaultHealthCheckInterval)
+	}
+	if got.AdminListen != "" {
+		t.Errorf("admin_listen = %q, want empty (admin server off)", got.AdminListen)
 	}
 	if got.EffectiveRequestTimeout() != 10*time.Second {
 		t.Errorf("EffectiveRequestTimeout() = %s, want the balancer's default of 10s", got.EffectiveRequestTimeout())

@@ -29,6 +29,11 @@ type Config struct {
 	AttemptTimeout      time.Duration `yaml:"attempt_timeout"`
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
 	MaxFailures         int           `yaml:"max_failures"`
+
+	// AdminListen is the address of the admin server, which serves /stats.
+	// Unlike the other settings, empty doesn't mean a default: it means
+	// the admin server is off.
+	AdminListen string `yaml:"admin_listen"`
 }
 
 // Load reads a YAML config file and fills in the defaults for the settings

@@ -22,6 +22,8 @@ func newPicker(alg Algorithm) (picker, error) {
 		return &leastConnections{}, nil
 	case WeightedRoundRobin:
 		return &weightedRoundRobin{}, nil
+	case WeightedLeastConnections:
+		return &weightedLeastConnections{}, nil
 	default:
 		return nil, fmt.Errorf("unknown algorithm %q", alg)
 	}
@@ -91,5 +93,31 @@ func (w *weightedRoundRobin) pick(candidates []*backend, r *http.Request) *backe
 		}
 	}
 	w.current[best] -= total
+	return best
+}
+
+// weightedLeastConnections picks the candidate with the fewest requests in
+// progress per unit of weight, so a backend with weight 3 is as loaded at 3
+// requests as one with weight 1 at 1. It compares by cross-multiplying,
+// since integer division would round 1/3 down to 0. Like leastConnections,
+// the scan starts at a rotating position so equally loaded backends take turns.
+type weightedLeastConnections struct {
+	counter atomic.Uint64
+}
+
+func (w *weightedLeastConnections) pick(candidates []*backend, r *http.Request) *backend {
+	n := uint64(len(candidates))
+	start := w.counter.Add(1) - 1
+
+	best := candidates[start%n]
+	least := best.active.Load()
+	for i := uint64(1); i < n; i++ {
+		c := candidates[(start+i)%n]
+		// active/c.weight < least/best.weight, without the division.
+		if active := c.active.Load(); active*int64(best.weight) < least*int64(c.weight) {
+			best, least = c, active
+		}
+	}
+
 	return best
 }

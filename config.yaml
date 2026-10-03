@@ -4,14 +4,16 @@
 # Address to listen on. Default ":8000".
 listen: ":8000"
 
-# How requests are spread: round-robin, least-connections, or
-# weighted-round-robin. Default round-robin.
+# How requests are spread: round-robin, least-connections,
+# weighted-round-robin, or weighted-least-connections. Default round-robin.
 algorithm: round-robin
 
 # The servers to balance across. scripts/run-backends.sh starts these.
 # Each entry is a URL, or an object with a url and a weight. Under
 # weighted-round-robin, a backend with weight 3 gets three times the
-# traffic of one with weight 1; other algorithms ignore weights.
+# traffic of one with weight 1; under weighted-least-connections it counts
+# as equally busy at three times the requests in progress. Other algorithms
+# ignore weights.
 # Default weight 1. For example:
 #   - url: http://127.0.0.1:8082
 #     weight: 3

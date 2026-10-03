@@ -204,3 +204,49 @@ func TestWeightedRoundRobinThroughBalancer(t *testing.T) {
 		t.Errorf("weights 3:1 over 8 requests gave a=%d b=%d, want 6 and 2", counts["a"], counts["b"])
 	}
 }
+
+// loaded returns backends with the given requests in progress and weights,
+// as active, weight pairs.
+func loaded(pairs ...[2]int) []*backend {
+	bs := make([]*backend, len(pairs))
+	for i, p := range pairs {
+		bs[i] = &backend{weight: p[1]}
+		bs[i].active.Store(int64(p[0]))
+	}
+	return bs
+}
+
+func TestWeightedLeastConnectionsUsesWeight(t *testing.T) {
+	// A has more requests but three times the capacity: 3/3 = 1 per unit of
+	// weight against B's 2/1 = 2. Plain least connections would pick B.
+	bs := loaded([2]int{3, 3}, [2]int{2, 1})
+	wlc := &weightedLeastConnections{}
+	for i := range len(bs) { // every rotating start position
+		if got := wlc.pick(bs, nil); got != bs[0] {
+			t.Errorf("pick %d: got backend %d, want 0 (least loaded per unit of weight)", i, indexOf(bs, got))
+		}
+	}
+}
+
+func TestWeightedLeastConnectionsNoRounding(t *testing.T) {
+	// Integer division would make both 0 (1/3 rounds down) and call it a tie.
+	bs := loaded([2]int{1, 3}, [2]int{0, 1})
+	wlc := &weightedLeastConnections{}
+	for i := range len(bs) {
+		if got := wlc.pick(bs, nil); got != bs[1] {
+			t.Errorf("pick %d: got backend %d, want 1 (the idle one)", i, indexOf(bs, got))
+		}
+	}
+}
+
+func TestWeightedLeastConnectionsSpreadsTies(t *testing.T) {
+	// 2/2 and 1/1 are equally loaded, so picks should alternate.
+	bs := loaded([2]int{2, 2}, [2]int{1, 1})
+	counts := make([]int, len(bs))
+	for _, i := range pickIndexes(&weightedLeastConnections{}, bs, 6) {
+		counts[i]++
+	}
+	if counts[0] != 3 || counts[1] != 3 {
+		t.Errorf("equally loaded backends got %v picks, want 3 each", counts)
+	}
+}

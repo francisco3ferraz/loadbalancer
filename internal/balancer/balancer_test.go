@@ -89,6 +89,14 @@ func TestNewErrors(t *testing.T) {
 	}
 }
 
+func TestNewAcceptsEveryAlgorithm(t *testing.T) {
+	for _, alg := range []Algorithm{RoundRobin, LeastConnections, WeightedRoundRobin, WeightedLeastConnections} {
+		if _, err := New(Config{Backends: urls("http://127.0.0.1:1"), Algorithm: alg}); err != nil {
+			t.Errorf("%s: %v", alg, err)
+		}
+	}
+}
+
 func TestRoundRobin(t *testing.T) {
 	lb := newBalancer(t, Config{Backends: urls(
 		namedBackend(t, "a"), namedBackend(t, "b"), namedBackend(t, "c"),

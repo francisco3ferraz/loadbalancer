@@ -23,6 +23,10 @@ const (
 	// WeightedRoundRobin sends each backend a share of requests in proportion
 	// to its Weight, spread evenly rather than in bursts.
 	WeightedRoundRobin Algorithm = "weighted-round-robin"
+	// WeightedLeastConnections sends each request to the backend with the
+	// fewest requests in progress relative to its Weight, for backends of
+	// different sizes where some requests are slow.
+	WeightedLeastConnections Algorithm = "weighted-least-connections"
 )
 
 // Backend is one server to balance across.
@@ -30,9 +34,10 @@ type Backend struct {
 	// URL is the server's address, such as "http://127.0.0.1:8080".
 	URL string
 
-	// Weight is the backend's share of traffic under WeightedRoundRobin: a
-	// backend with weight 3 gets three times the requests of one with
-	// weight 1. Other algorithms ignore it. Default 1.
+	// Weight is the backend's relative capacity, used by WeightedRoundRobin
+	// and WeightedLeastConnections: a backend with weight 3 gets three times
+	// the requests of one with weight 1, or counts as equally loaded at three
+	// times the requests in progress. Other algorithms ignore it. Default 1.
 	Weight int
 }
 

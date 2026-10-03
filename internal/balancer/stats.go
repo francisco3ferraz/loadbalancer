@@ -8,11 +8,12 @@ type Stats struct {
 
 // BackendStats is a snapshot of one backend.
 type BackendStats struct {
-	URL      string `json:"url"`
-	Alive    bool   `json:"alive"`
-	Active   int64  `json:"active"`   // requests in progress
-	Failures int32  `json:"failures"` // failures in a row
-	Requests uint64 `json:"requests"` // attempts served in total
+	URL           string `json:"url"`
+	Alive         bool   `json:"alive"`
+	Active        int64  `json:"active"`         // requests in progress
+	Failures      int32  `json:"failures"`       // failures in a row
+	Requests      uint64 `json:"requests"`       // attempts served in total
+	TotalFailures uint64 `json:"total_failures"` // failures in total
 }
 
 // Stats returns a snapshot of every backend. Each value is read atomically,
@@ -21,11 +22,12 @@ func (lb *Balancer) Stats() Stats {
 	backends := make([]BackendStats, 0, len(lb.backends))
 	for _, b := range lb.backends {
 		backends = append(backends, BackendStats{
-			URL:      b.url.String(),
-			Alive:    b.alive.Load(),
-			Active:   b.active.Load(),
-			Failures: b.failures.Load(),
-			Requests: b.requests.Load(),
+			URL:           b.url.String(),
+			Alive:         b.alive.Load(),
+			Active:        b.active.Load(),
+			Failures:      b.failures.Load(),
+			Requests:      b.requests.Load(),
+			TotalFailures: b.totalFailures.Load(),
 		})
 	}
 	return Stats{Backends: backends}

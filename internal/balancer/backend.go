@@ -15,12 +15,13 @@ import (
 )
 
 type backend struct {
-	url      *url.URL
-	proxy    *httputil.ReverseProxy
-	alive    atomic.Bool
-	failures atomic.Int32
-	active   atomic.Int64
-	requests atomic.Uint64
+	url           *url.URL
+	proxy         *httputil.ReverseProxy
+	alive         atomic.Bool
+	failures      atomic.Int32
+	active        atomic.Int64
+	requests      atomic.Uint64
+	totalFailures atomic.Uint64
 
 	maxFailures int32 // in a row; connection errors mark it down at once
 	weight      int   // never changes, so it needs no synchronisation
@@ -103,6 +104,7 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 	}
 
 	log.Printf("%s failed: %v", b.url.Host, err)
+	b.totalFailures.Add(1)
 	dead := false
 
 	var opErr *net.OpError

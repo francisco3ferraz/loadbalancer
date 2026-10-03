@@ -32,6 +32,10 @@ func Handler(src statsSource) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		
+	})
+
 	// Registered by hand: importing net/http/pprof for its side effect only
 	// adds them to http.DefaultServeMux.
 	mux.HandleFunc("GET /debug/pprof/", pprof.Index)

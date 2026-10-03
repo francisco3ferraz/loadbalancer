@@ -16,11 +16,12 @@ func TestStats(t *testing.T) {
 	}
 
 	// The dead backend's Failures stays 0: a connection error marks a backend
-	// down straight away without counting toward MaxFailures.
+	// down straight away without counting toward MaxFailures. It's still a
+	// failure, so TotalFailures counts it.
 	got := lb.Stats().Backends
 	want := []BackendStats{
 		{URL: healthy, Alive: true, Active: 0, Failures: 0, Requests: 2},
-		{URL: dead, Alive: false, Active: 0, Failures: 0, Requests: 1},
+		{URL: dead, Alive: false, Active: 0, Failures: 0, Requests: 1, TotalFailures: 1},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d backends, want %d", len(got), len(want))

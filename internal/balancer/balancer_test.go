@@ -260,6 +260,25 @@ func TestTimeoutsMarkDownAfterMaxFailures(t *testing.T) {
 	}
 }
 
+// TestTimeoutsCountTowardTotalFailures checks that a failure is counted
+// whether or not it marks the backend down.
+func TestTimeoutsCountTowardTotalFailures(t *testing.T) {
+	lb := newBalancer(t, Config{
+		Backends:       urls(hangingBackend(t)),
+		AttemptTimeout: 50 * time.Millisecond,
+		MaxFailures:    3,
+	})
+
+	for range 2 {
+		send(lb, http.MethodGet)
+	}
+
+	b := lb.backends[0]
+	if got := b.totalFailures.Load(); got != 2 || !b.alive.Load() {
+		t.Errorf("totalFailures = %d, alive = %v; want 2, true", got, b.alive.Load())
+	}
+}
+
 func TestSuccessResetsFailures(t *testing.T) {
 	lb := newBalancer(t, Config{Backends: urls(namedBackend(t, "a"))})
 	lb.backends[0].failures.Store(2)
@@ -289,8 +308,8 @@ func TestRequestDeadline(t *testing.T) {
 	}
 	// Running out of budget is not the backend's fault.
 	for i, b := range lb.backends {
-		if b.failures.Load() != 0 || !b.alive.Load() {
-			t.Errorf("backend %d: failures = %d, alive = %v; want 0, true", i, b.failures.Load(), b.alive.Load())
+		if b.failures.Load() != 0 || b.totalFailures.Load() != 0 || !b.alive.Load() {
+			t.Errorf("backend %d: failures = %d, totalFailures = %d, alive = %v; want 0, 0, true", i, b.failures.Load(), b.totalFailures.Load(), b.alive.Load())
 		}
 	}
 }
@@ -475,8 +494,8 @@ func TestUndeclaredBodySizeLimit(t *testing.T) {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusRequestEntityTooLarge)
 	}
 	b := lb.backends[0]
-	if b.failures.Load() != 0 || !b.alive.Load() {
-		t.Errorf("failures = %d, alive = %v; want 0, true", b.failures.Load(), b.alive.Load())
+	if b.failures.Load() != 0 || b.totalFailures.Load() != 0 || !b.alive.Load() {
+		t.Errorf("failures = %d, totalFailures = %d, alive = %v; want 0, 0, true", b.failures.Load(), b.totalFailures.Load(), b.alive.Load())
 	}
 }
 
@@ -493,8 +512,8 @@ func TestClientGivingUpIsNotCounted(t *testing.T) {
 	lb.ServeHTTP(httptest.NewRecorder(), req)
 
 	b := lb.backends[0]
-	if b.failures.Load() != 0 || !b.alive.Load() {
-		t.Errorf("failures = %d, alive = %v; want 0, true", b.failures.Load(), b.alive.Load())
+	if b.failures.Load() != 0 || b.totalFailures.Load() != 0 || !b.alive.Load() {
+		t.Errorf("failures = %d, totalFailures = %d, alive = %v; want 0, 0, true", b.failures.Load(), b.totalFailures.Load(), b.alive.Load())
 	}
 }
 
@@ -669,8 +688,8 @@ func TestRetryUnavailable(t *testing.T) {
 			if code, body := send(lb, http.MethodGet); code != http.StatusOK || body != "b" {
 				t.Errorf("got %d %q, want 200 %q", code, body, "b")
 			}
-			if a := lb.backends[0]; !a.alive.Load() || a.failures.Load() != 0 {
-				t.Errorf("first backend: alive = %v, failures = %d; want it not blamed", a.alive.Load(), a.failures.Load())
+			if a := lb.backends[0]; !a.alive.Load() || a.failures.Load() != 0 || a.totalFailures.Load() != 0 {
+				t.Errorf("first backend: alive = %v, failures = %d, totalFailures = %d; want it not blamed", a.alive.Load(), a.failures.Load(), a.totalFailures.Load())
 			}
 		})
 	}

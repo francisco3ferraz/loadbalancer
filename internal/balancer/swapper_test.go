@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// sendTo makes one request through h and returns the status code and body.
 func sendTo(h http.Handler) (int, string) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -53,8 +52,7 @@ func TestSwapperNil(t *testing.T) {
 	NewSwapper(nil)
 }
 
-// Requests sent while the balancer is swapped must all succeed. Run with
-// -race to check the swap is safe.
+// Meant for -race.
 func TestSwapperConcurrent(t *testing.T) {
 	a := newBalancer(t, Config{Backends: urls(namedBackend(t, "a"))})
 	b := newBalancer(t, Config{Backends: urls(namedBackend(t, "b"))})

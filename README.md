@@ -27,7 +27,10 @@ a real failure mode, and each one is covered by tests.
 - **Request size limit:** bodies over `max_body_size` get a `413`, whether or
   not the client declares the size up front, and backends aren't blamed.
 - **Graceful shutdown:** on Ctrl+C or `SIGTERM`, requests in progress finish
-  before the process exits. A second Ctrl+C exits immediately.
+  before the process exits. A second Ctrl+C exits immediately. Event streams
+  never finish on their own, so they hold the shutdown for its full limit
+  (`request_timeout` + 5s) and are then cut; WebSockets are cut when the
+  process exits.
 - **Access log:** one structured line per request on stdout, with the backend
   that served it and how many were tried; errors stay on stderr.
 - **Stats:** an optional admin server with a JSON `/stats` endpoint.
@@ -79,8 +82,8 @@ backends:
 ```
 
 The config is checked at startup: unknown keys (such as a typo like
-`algoritm`), invalid durations, negative values and unknown algorithms are
-reported as errors, and the load balancer doesn't start.
+`algoritm`), invalid durations or sizes, negative values and unknown algorithms
+are reported as errors, and the load balancer doesn't start.
 
 ## Algorithms
 
@@ -171,6 +174,9 @@ curl 'localhost:8000/slow?d=3s'                         # a slow request through
 curl -N localhost:8000/stream                           # server-sent events, one a second
 ```
 
+The fake backend's `/ws` accepts a plain `Connection: Upgrade` and echoes back
+whatever it receives, which is all a proxy sees of a WebSocket.
+
 `scripts/run-backends.sh` starts several at once (`BACKEND_FLAGS` passes flags
 to all of them), and prints each PID so you can kill one to simulate a crash.
 
@@ -179,7 +185,8 @@ to all of them), and prints each PID so you can kill one to simulate a crash.
 ```
 cmd/loadbalancer     the program: loads config, starts the servers, shuts down
 cmd/fakebackend      a controllable backend for testing
-internal/balancer    proxying, retries, timeouts, health checks, algorithms, stats
+internal/balancer    proxying, retries, timeouts, health checks, algorithms,
+                     stats, access log
 internal/config      the YAML file format
 internal/admin       the /stats endpoint
 scripts/             run-backends.sh
@@ -213,8 +220,9 @@ These are real load balancer features, deliberately left out of scope:
 TLS termination, HTTP/2 to backends, Prometheus metrics, structured error
 logs (only the access log is structured), reloading the config without a
 restart, sticky sessions (consistent hashing), latency-based algorithms, and an
-idle timeout for long-lived connections: a WebSocket or stream whose backend
-goes silent stays open until one end closes it.
+idle timeout for long-lived connections (a WebSocket or stream whose backend
+goes silent stays open until one end closes it), and closing them cleanly on
+shutdown.
 
 ## License
 

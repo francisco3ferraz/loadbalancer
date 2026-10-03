@@ -6,6 +6,7 @@
 //
 //	go run ./cmd/fakebackend -port 8080
 //	go run ./cmd/fakebackend -port 8081 -delay 200ms -error-rate 0.1
+//	go run ./cmd/fakebackend -port 8082 -quiet
 //
 // Endpoints:
 //
@@ -52,6 +53,7 @@ func main() {
 	delay := flag.Duration("delay", 0, "latency added to every request on /")
 	errorRate := flag.Float64("error-rate", 0, "fraction of requests on / that fail with 500, from 0 to 1")
 	logHealth := flag.Bool("log-health", false, "also log /health requests")
+	quiet := flag.Bool("quiet", false, "log no requests, for benchmarks")
 	flag.Parse()
 
 	if *errorRate < 0 || *errorRate > 1 {
@@ -64,9 +66,13 @@ func main() {
 	s := &server{name: *name, delay: *delay, errorRate: *errorRate}
 	s.healthy.Store(true)
 
+	handler := s.routes()
+	if !*quiet {
+		handler = logRequests(s.name, *logHealth, handler)
+	}
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", *port),
-		Handler:           logRequests(s.name, *logHealth, s.routes()),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

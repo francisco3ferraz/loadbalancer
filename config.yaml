@@ -45,6 +45,11 @@ max_failures: 3
 # 1024, as in nginx's client_max_body_size). Default 1MB.
 max_body_size: 1MB
 
+# Retry GET, HEAD and OPTIONS requests without a body on another backend
+# when a backend answers 502 or 503. The last backend's answer is passed on
+# as it is. These answers don't count toward max_failures. Default false.
+retry_unavailable: false
+
 # Log one line per request to stdout: method, path, status, size, duration,
 # client and backend. Errors and state changes go to stderr either way.
 # Default true.

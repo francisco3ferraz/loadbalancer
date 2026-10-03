@@ -75,6 +75,12 @@ type Config struct {
 	// requests get a 413 without reaching any backend, or, when the client
 	// doesn't declare the size, as soon as the limit is passed. Default 1 MB.
 	MaxBodySize int64
+
+	// RetryUnavailable retries a safe request on another backend when a
+	// backend answers 502 Bad Gateway or 503 Service Unavailable. The last
+	// backend tried has its response passed on as it is. These answers
+	// don't count toward MaxFailures. Default false.
+	RetryUnavailable bool
 }
 
 // withDefaults returns a copy of c with unset fields filled in.

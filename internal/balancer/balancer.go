@@ -23,6 +23,7 @@ type Balancer struct {
 	requestTimeout time.Duration // total time per request, across retries
 	healthPath     string        // path requested by health checks
 	maxBodySize    int64         // largest request body accepted, in bytes
+	retryStatus    bool          // retry safe requests answered 502 or 503
 }
 
 // New returns a Balancer for cfg. It returns an error if cfg is invalid: no
@@ -57,6 +58,7 @@ func New(cfg Config) (*Balancer, error) {
 		requestTimeout: cfg.RequestTimeout,
 		healthPath:     cfg.HealthPath,
 		maxBodySize:    cfg.MaxBodySize,
+		retryStatus:    cfg.RetryUnavailable,
 		picker:         p,
 	}
 	for _, be := range cfg.Backends {
@@ -90,7 +92,9 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, lb.maxBodySize)
 
 	var failErr error
-	r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failErr))
+	var canRetry bool
+	ctx := context.WithValue(r.Context(), failedKey{}, &failErr)
+	r = r.WithContext(context.WithValue(ctx, retryKey{}, &canRetry))
 
 	if !isUpgrade(r) {
 		// A timer instead of WithTimeout, so the deadline can be lifted when
@@ -109,6 +113,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}))
 	}
 
+	retryable := isRetryable(r)
 	candidates := lb.aliveBackends()
 	for len(candidates) > 0 {
 		b := lb.picker.pick(candidates, r)
@@ -119,6 +124,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		failErr = nil
+		canRetry = lb.retryStatus && retryable && len(candidates) > 0
 		b.serve(w, r)
 
 		if failErr == nil {
@@ -140,7 +146,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if !isRetryable(r) {
+		if !retryable {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return
 		}

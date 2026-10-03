@@ -18,7 +18,7 @@ a real failure mode, and each one is covered by tests.
   row, so one slow URL can't take healthy servers out of rotation.
 - **Retries:** failed `GET`, `HEAD` and `OPTIONS` requests without a body are
   retried on another backend. Other requests are never retried, since repeating
-  them could have side effects.
+  them could have side effects. Optionally, so are answers of `502` or `503`.
 - **Timeouts:** per attempt, per request across all retries (giving a `504`),
   and on the server itself against slow clients.
 - **Long-lived connections:** WebSockets (and any other `Upgrade`) and
@@ -111,6 +111,12 @@ For each request, the load balancer tries backends one at a time:
    down when the count reaches `max_failures`.
 4. **Retry:** for `GET`, `HEAD` and `OPTIONS` requests without a body, the next
    backend is tried. Otherwise the client gets a `502`.
+5. **`502` or `503` answer:** with `retry_unavailable: true`, these requests
+   are also retried on the next backend, and the backend isn't counted as
+   failing; health checks decide whether it's down. The last backend's answer
+   is passed to the client unchanged, `Retry-After` included. The response
+   can't be retried once it has started reaching the client, so the decision
+   is made as soon as the backend's headers arrive.
 
 The client's response depends on why the request couldn't be served:
 
@@ -118,7 +124,7 @@ The client's response depends on why the request couldn't be served:
 |---|---|
 | `413 Content Too Large` | The request body was over `max_body_size` |
 | `502 Bad Gateway` | A backend was tried and failed |
-| `503 Service Unavailable` | No backend was up, so none was tried |
+| `503 Service Unavailable` | No backend was up, so none was tried (or a backend's own `503`) |
 | `504 Gateway Timeout` | `request_timeout` ran out |
 
 If the client disconnects, sends a body over `max_body_size`, or

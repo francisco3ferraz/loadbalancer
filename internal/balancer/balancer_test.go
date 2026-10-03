@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -642,5 +643,71 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func statusBackend(t *testing.T, code int, name string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(code)
+		fmt.Fprint(w, name)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestRetryUnavailable(t *testing.T) {
+	for _, code := range []int{http.StatusBadGateway, http.StatusServiceUnavailable} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			lb := newBalancer(t, Config{
+				Backends:         urls(statusBackend(t, code, "a"), namedBackend(t, "b")),
+				RetryUnavailable: true,
+			})
+
+			if code, body := send(lb, http.MethodGet); code != http.StatusOK || body != "b" {
+				t.Errorf("got %d %q, want 200 %q", code, body, "b")
+			}
+			if a := lb.backends[0]; !a.alive.Load() || a.failures.Load() != 0 {
+				t.Errorf("first backend: alive = %v, failures = %d; want it not blamed", a.alive.Load(), a.failures.Load())
+			}
+		})
+	}
+}
+
+func TestRetryUnavailableOffByDefault(t *testing.T) {
+	lb := newBalancer(t, Config{Backends: urls(statusBackend(t, http.StatusServiceUnavailable, "a"), namedBackend(t, "b"))})
+
+	if code, body := send(lb, http.MethodGet); code != http.StatusServiceUnavailable || body != "a" {
+		t.Errorf("got %d %q, want 503 %q", code, body, "a")
+	}
+}
+
+// The client should get the last backend's own answer, not a generic 502.
+func TestRetryUnavailableLastAttemptPassesThrough(t *testing.T) {
+	lb := newBalancer(t, Config{
+		Backends:         urls(statusBackend(t, http.StatusServiceUnavailable, "a"), statusBackend(t, http.StatusServiceUnavailable, "b")),
+		RetryUnavailable: true,
+	})
+
+	rec := httptest.NewRecorder()
+	lb.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != "b" || rec.Header().Get("Retry-After") != "1" {
+		t.Errorf("got %d %q, Retry-After %q; want b's 503 with Retry-After 1",
+			rec.Code, rec.Body.String(), rec.Header().Get("Retry-After"))
+	}
+}
+
+func TestRetryUnavailableSkipsUnsafeRequests(t *testing.T) {
+	lb := newBalancer(t, Config{
+		Backends:         urls(statusBackend(t, http.StatusServiceUnavailable, "a"), namedBackend(t, "b")),
+		RetryUnavailable: true,
+	})
+
+	if code, body := send(lb, http.MethodPost); code != http.StatusServiceUnavailable || body != "a" {
+		t.Errorf("got %d %q, want 503 %q", code, body, "a")
+	}
+	if n := lb.backends[1].requests.Load(); n != 0 {
+		t.Errorf("second backend got %d requests, want 0", n)
 	}
 }

@@ -34,6 +34,7 @@ type Config struct {
 	MaxFailures         int           `yaml:"max_failures"`
 	HealthPath          string        `yaml:"health_path"`
 	MaxBodySize         ByteSize      `yaml:"max_body_size"`
+	RetryUnavailable    bool          `yaml:"retry_unavailable"`
 
 	// A pointer, so leaving it out can mean on while false turns it off.
 	AccessLog *bool `yaml:"access_log"`
@@ -171,13 +172,14 @@ func (c Config) BalancerConfig() balancer.Config {
 		backends[i] = balancer.Backend{URL: b.URL, Weight: b.Weight}
 	}
 	return balancer.Config{
-		Backends:       backends,
-		Algorithm:      balancer.Algorithm(c.Algorithm),
-		AttemptTimeout: c.AttemptTimeout,
-		RequestTimeout: c.RequestTimeout,
-		MaxFailures:    c.MaxFailures,
-		HealthPath:     c.HealthPath,
-		MaxBodySize:    int64(c.MaxBodySize),
+		Backends:         backends,
+		Algorithm:        balancer.Algorithm(c.Algorithm),
+		AttemptTimeout:   c.AttemptTimeout,
+		RequestTimeout:   c.RequestTimeout,
+		MaxFailures:      c.MaxFailures,
+		HealthPath:       c.HealthPath,
+		MaxBodySize:      int64(c.MaxBodySize),
+		RetryUnavailable: c.RetryUnavailable,
 	}
 }
 

@@ -32,6 +32,7 @@ request_timeout: 1m
 max_failures: 5
 health_path: /healthz
 max_body_size: 10MB
+retry_unavailable: true
 access_log: false
 admin_listen: "127.0.0.1:9001"
 `)
@@ -49,6 +50,7 @@ admin_listen: "127.0.0.1:9001"
 		MaxFailures:         5,
 		HealthPath:          "/healthz",
 		MaxBodySize:         10 << 20,
+		RetryUnavailable:    true,
 		AccessLog:           new(false),
 		AdminListen:         "127.0.0.1:9001",
 	}
@@ -60,6 +62,9 @@ admin_listen: "127.0.0.1:9001"
 	}
 	if got.AccessLogEnabled() {
 		t.Error("access_log: false left the access log on")
+	}
+	if !got.BalancerConfig().RetryUnavailable {
+		t.Error("retry_unavailable didn't reach the balancer config")
 	}
 	if size := got.BalancerConfig().MaxBodySize; size != 10<<20 {
 		t.Errorf("balancer max body size = %d, want %d", size, 10<<20)

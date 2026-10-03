@@ -3,6 +3,7 @@ package balancer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"mime"
 	"net"
@@ -28,6 +29,15 @@ type backend struct {
 // handleError sets to the error when an attempt fails, so ServeHTTP can tell
 // why it failed.
 type failedKey struct{}
+
+// retryKey is the context key under which ServeHTTP stores a *bool, set
+// before each attempt, telling modifyResponse whether a 502 or 503 may be
+// retried on another backend. When it can't, the response goes to the client.
+type retryKey struct{}
+
+// errRetryStatus is returned by modifyResponse to turn a 502 or 503 into a
+// failed attempt, which ServeHTTP retries.
+var errRetryStatus = errors.New("retryable status")
 
 // streamKey is the context key under which ServeHTTP stores a func() that
 // lifts the request deadline. modifyResponse calls it when the response is
@@ -73,6 +83,13 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 		return
 	}
 
+	// The backend answered, so it isn't counted as failing. Health checks
+	// decide whether it's down.
+	if errors.Is(err, errRetryStatus) {
+		log.Printf("%s: %v, trying another backend", b.url.Host, err)
+		return
+	}
+
 	log.Printf("%s failed: %v", b.url.Host, err)
 	dead := false
 
@@ -90,11 +107,18 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 }
 
 // modifyResponse is the proxy's ModifyResponse hook, which runs when the
-// backend's response headers arrive. It lifts the request deadline for
-// server-sent events, which stay open for as long as the backend sends them,
-// and tells the access log about protocol switches, which it can't see.
-// It always returns nil: an error would make the proxy reply 502 instead.
+// backend's response headers arrive, before anything reaches the client.
+// It rejects a 502 or 503 that may be retried, lifts the request deadline
+// for server-sent events, which stay open for as long as the backend sends
+// them, and tells the access log about protocol switches, which it can't see.
 func (b *backend) modifyResponse(resp *http.Response) error {
+	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable {
+		if retry, ok := resp.Request.Context().Value(retryKey{}).(*bool); ok && *retry {
+			// The proxy closes the body and calls handleError instead.
+			return fmt.Errorf("%w %d", errRetryStatus, resp.StatusCode)
+		}
+	}
+
 	if a := accessFrom(resp.Request.Context()); a != nil && resp.StatusCode == http.StatusSwitchingProtocols {
 		a.upgraded = true
 	}

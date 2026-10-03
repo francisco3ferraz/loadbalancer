@@ -1,7 +1,9 @@
-// Package admin serves the load balancer's admin endpoints, such as /stats.
+// Package admin serves the load balancer's admin endpoints, such as /stats
+// and /metrics.
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -20,9 +22,11 @@ type statsSource interface {
 // can't reach it, such as on a loopback address.
 //
 //	GET /stats         JSON snapshot of every backend (see balancer.Stats)
+//	GET /metrics       the same, in Prometheus' text format
 //	GET /debug/pprof/  runtime profiles for go tool pprof
 func Handler(src statsSource) http.Handler {
 	mux := http.NewServeMux()
+
 	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// Encode only fails when writing to the client fails. The response
@@ -32,8 +36,13 @@ func Handler(src statsSource) http.Handler {
 		}
 	})
 
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-		
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
+		var buf bytes.Buffer
+		writeMetrics(&buf, src.Stats())
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		if _, err := buf.WriteTo(w); err != nil {
+			log.Printf("admin: write metrics: %v", err)
+		}
 	})
 
 	// Registered by hand: importing net/http/pprof for its side effect only

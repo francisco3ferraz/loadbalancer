@@ -18,8 +18,8 @@ func (f fakeStats) Stats() balancer.Stats { return balancer.Stats(f) }
 // Every field is non-zero somewhere, so a field the handler failed to encode
 // would show up as a difference instead of decoding to a matching zero.
 var testStats = fakeStats{Backends: []balancer.BackendStats{
-	{URL: "http://a:1", Alive: true, Active: 2, Failures: 0, Requests: 150},
-	{URL: "http://b:2", Alive: false, Active: 0, Failures: 3, Requests: 7},
+	{URL: "http://a:1", Alive: true, Active: 2, Failures: 0, Requests: 150, TotalFailures: 4},
+	{URL: "http://b:2", Alive: false, Active: 0, Failures: 3, Requests: 7, TotalFailures: 1000000},
 }}
 
 func TestStats(t *testing.T) {
@@ -58,7 +58,7 @@ func TestStatsJSONKeys(t *testing.T) {
 	if len(raw.Backends) == 0 {
 		t.Fatalf("no backends in %s", rec.Body)
 	}
-	for _, key := range []string{"url", "alive", "active", "failures", "requests"} {
+	for _, key := range []string{"url", "alive", "active", "failures", "requests", "total_failures"} {
 		if _, ok := raw.Backends[0][key]; !ok {
 			t.Errorf("key %q missing from %v", key, raw.Backends[0])
 		}

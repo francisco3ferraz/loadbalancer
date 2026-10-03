@@ -2,9 +2,12 @@ package balancer
 
 import "time"
 
+// DefaultRequestTimeout is the RequestTimeout used when none is set.
+// It's exported so callers can size their own server timeouts above it.
+const DefaultRequestTimeout = 10 * time.Second
+
 const (
 	defaultAttemptTimeout = 5 * time.Second
-	defaultRequestTimeout = 10 * time.Second
 	defaultMaxFailures    = 3
 )
 
@@ -49,7 +52,7 @@ func (c Config) withDefaults() Config {
 		c.AttemptTimeout = defaultAttemptTimeout
 	}
 	if c.RequestTimeout == 0 {
-		c.RequestTimeout = defaultRequestTimeout
+		c.RequestTimeout = DefaultRequestTimeout
 	}
 	if c.MaxFailures == 0 {
 		c.MaxFailures = defaultMaxFailures

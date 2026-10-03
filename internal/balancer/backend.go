@@ -17,6 +17,7 @@ type backend struct {
 	alive    atomic.Bool
 	failures atomic.Int32
 	active   atomic.Int64
+	requests atomic.Uint64
 
 	// maxFailures is how many failures in a row (other than connection
 	// errors) mark the backend down.
@@ -72,6 +73,8 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 // runs. The decrement is deferred so it also happens when the proxy panics,
 // which it does when the client disconnects mid-response.
 func (b *backend) serve(w http.ResponseWriter, r *http.Request) {
+	b.requests.Add(1)
+
 	b.active.Add(1)
 	defer b.active.Add(-1)
 

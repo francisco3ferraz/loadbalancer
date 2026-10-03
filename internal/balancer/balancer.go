@@ -30,6 +30,9 @@ func New(cfg Config) (*Balancer, error) {
 	if len(cfg.Backends) == 0 {
 		return nil, errors.New("no backends given")
 	}
+	if cfg.AttemptTimeout < 0 || cfg.RequestTimeout < 0 || cfg.MaxFailures < 0 {
+		return nil, errors.New("timeouts and max failures must not be negative")
+	}
 	p, err := newPicker(cfg.Algorithm)
 	if err != nil {
 		return nil, err

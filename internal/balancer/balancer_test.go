@@ -60,6 +60,10 @@ func TestNewErrors(t *testing.T) {
 	tests := map[string]Config{
 		"no backends": {},
 		"bad url":     {Backends: []string{"http://[::1"}},
+		"negative timeout": {
+			Backends:       []string{"http://127.0.0.1:1"},
+			RequestTimeout: -time.Second,
+		},
 		"bad algorithm": {
 			Backends:  []string{"http://127.0.0.1:1"},
 			Algorithm: "fastest",

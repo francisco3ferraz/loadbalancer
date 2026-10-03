@@ -1,0 +1,105 @@
+package config
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+// writeConfig writes content to a config file in a temporary directory that
+// is deleted when the test ends, and returns its path.
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadConfigFull(t *testing.T) {
+	path := writeConfig(t, `
+listen: ":9000"
+algorithm: least-connections
+backends:
+  - http://a:1
+  - http://b:2
+health_check_interval: 2s
+attempt_timeout: 1500ms
+request_timeout: 1m
+max_failures: 5
+`)
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Config{
+		Listen:              ":9000",
+		Algorithm:           "least-connections",
+		Backends:            []string{"http://a:1", "http://b:2"},
+		HealthCheckInterval: 2 * time.Second,
+		AttemptTimeout:      1500 * time.Millisecond,
+		RequestTimeout:      time.Minute,
+		MaxFailures:         5,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+}
+
+func TestLoadConfigDefaults(t *testing.T) {
+	got, err := Load(writeConfig(t, "backends: [http://a:1]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Listen != defaultListen || got.HealthCheckInterval != defaultHealthCheckInterval {
+		t.Errorf("listen = %q, health_check_interval = %s; want %q, %s",
+			got.Listen, got.HealthCheckInterval, defaultListen, defaultHealthCheckInterval)
+	}
+	if got.EffectiveRequestTimeout() != 10*time.Second {
+		t.Errorf("EffectiveRequestTimeout() = %s, want the balancer's default of 10s", got.EffectiveRequestTimeout())
+	}
+}
+
+func TestLoadConfigErrors(t *testing.T) {
+	tests := []struct {
+		name, content, wantErr string
+	}{
+		{"unknown key", "backends: [http://a:1]\nalgoritm: round-robin\n", "algoritm"},
+		{"bad duration", "backends: [http://a:1]\nrequest_timeout: 5 seconds\n", "line 2"},
+		{"bare number duration", "backends: [http://a:1]\nrequest_timeout: 5\n", "line 2"},
+		{"negative interval", "backends: [http://a:1]\nhealth_check_interval: -1s\n", "health_check_interval"},
+		{"empty file", "", "empty"},
+		{"not yaml", "backends: [unclosed\n", "load config"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want an error mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadConfigMissingFile(t *testing.T) {
+	_, err := Load(filepath.Join(t.TempDir(), "nope.yaml"))
+	if !os.IsNotExist(errors.Unwrap(err)) {
+		t.Errorf("err = %v, want a not-exist error", err)
+	}
+}
+
+// TestShippedConfig makes sure config.yaml at the repo root stays valid.
+func TestShippedConfig(t *testing.T) {
+	cfg, err := Load("../../config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Backends) == 0 {
+		t.Error("config.yaml lists no backends")
+	}
+}

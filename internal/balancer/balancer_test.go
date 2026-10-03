@@ -3,6 +3,7 @@ package balancer
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -709,5 +710,75 @@ func TestRetryUnavailableSkipsUnsafeRequests(t *testing.T) {
 	}
 	if n := lb.backends[1].requests.Load(); n != 0 {
 		t.Errorf("second backend got %d requests, want 0", n)
+	}
+}
+
+// receivedBackend records the last request it received.
+func receivedBackend(t *testing.T, basePath string) (string, func() *http.Request) {
+	t.Helper()
+	var last atomic.Pointer[http.Request]
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		last.Store(r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + basePath, last.Load
+}
+
+func TestForwardingHeaders(t *testing.T) {
+	tests := []struct {
+		name      string
+		tls       bool
+		wantProto string
+	}{
+		{"http", false, "http"},
+		{"https", true, "https"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url, received := receivedBackend(t, "")
+			lb := newBalancer(t, Config{Backends: urls(url)})
+
+			req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+			req.RemoteAddr = "203.0.113.7:5000"
+			if tt.tls {
+				req.TLS = &tls.ConnectionState{}
+			}
+			// Forged by the client: none of these may reach the backend.
+			req.Header.Set("X-Forwarded-For", "10.0.0.1")
+			req.Header.Set("X-Forwarded-Host", "evil.example")
+			req.Header.Set("X-Forwarded-Proto", "https")
+			req.Header.Set("Forwarded", "for=10.0.0.1")
+			lb.ServeHTTP(httptest.NewRecorder(), req)
+
+			r := received()
+			if r == nil {
+				t.Fatal("backend got no request")
+			}
+			want := map[string]string{
+				"X-Forwarded-For":   "203.0.113.7",
+				"X-Forwarded-Host":  "example.com",
+				"X-Forwarded-Proto": tt.wantProto,
+				"Forwarded":         "",
+			}
+			for name, value := range want {
+				if got := r.Header.Values(name); strings.Join(got, ", ") != value {
+					t.Errorf("%s = %q, want %q", name, got, value)
+				}
+			}
+			if r.Host != "example.com" {
+				t.Errorf("Host = %q, want the client's %q", r.Host, "example.com")
+			}
+		})
+	}
+}
+
+func TestProxyKeepsBackendBasePath(t *testing.T) {
+	url, received := receivedBackend(t, "/api")
+	lb := newBalancer(t, Config{Backends: urls(url)})
+
+	lb.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users?id=1", nil))
+
+	if r := received(); r == nil || r.URL.RequestURI() != "/api/users?id=1" {
+		t.Errorf("backend got %v, want /api/users?id=1", r)
 	}
 }

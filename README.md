@@ -34,6 +34,9 @@ a real failure mode, and each one is covered by tests.
 - **Config reload:** `kill -HUP <pid>` applies an edited config without
   closing the port or failing a request; an invalid config is rejected and
   the old one keeps running.
+- **Forwarding headers:** backends get `X-Forwarded-For`, `X-Forwarded-Host`
+  and `X-Forwarded-Proto`, set by the load balancer and never copied from the
+  client, so they can't be forged. The client's `Host` is kept.
 - **Access log:** one structured line per request on stdout, with the backend
   that served it and how many were tried; errors stay on stderr.
 - **Stats:** an optional admin server with a JSON `/stats` endpoint.
@@ -248,7 +251,9 @@ scripts/             run-backends.sh
 
 These are real load balancer features, deliberately left out of scope:
 TLS termination, HTTP/2 to backends, Prometheus metrics, structured error
-logs (only the access log is structured), sticky sessions (consistent hashing), latency-based algorithms, and an
+logs (only the access log is structured), sticky sessions (consistent hashing), latency-based algorithms,
+trusted proxies (behind a CDN or another proxy, forwarding headers describe
+that proxy, not the real client), the standard `Forwarded` header, an
 idle timeout for long-lived connections (a WebSocket or stream whose backend
 goes silent stays open until one end closes it), and closing them cleanly on
 shutdown.

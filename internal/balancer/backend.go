@@ -47,15 +47,25 @@ type streamKey struct{}
 func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32, weight int) *backend {
 	b := &backend{
 		url:         u,
-		proxy:       httputil.NewSingleHostReverseProxy(u),
+		proxy:       &httputil.ReverseProxy{},
 		maxFailures: maxFailures,
 		weight:      weight,
 	}
 	b.alive.Store(true)
+	b.proxy.Rewrite = b.rewrite
 	b.proxy.Transport = transport
 	b.proxy.ErrorHandler = b.handleError
 	b.proxy.ModifyResponse = b.modifyResponse
 	return b
+}
+
+// rewrite is the proxy's Rewrite hook. The proxy strips the client's
+// forwarding headers before calling it, so the ones set here can be trusted
+// by backends; appending to the client's would let it forge its address.
+func (b *backend) rewrite(pr *httputil.ProxyRequest) {
+	pr.SetURL(b.url)
+	pr.Out.Host = pr.In.Host // SetURL would send the backend's own host
+	pr.SetXForwarded()
 }
 
 // handleError is the proxy's ErrorHandler. It writes nothing: it reports the

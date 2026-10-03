@@ -39,7 +39,8 @@ a real failure mode, and each one is covered by tests.
   client, so they can't be forged. The client's `Host` is kept.
 - **Access log:** one structured line per request on stdout, with the backend
   that served it and how many were tried; errors stay on stderr.
-- **Stats:** an optional admin server with a JSON `/stats` endpoint.
+- **Stats:** an optional admin server with a JSON `/stats` endpoint and
+  `pprof` profiles.
 
 ## Quick start
 
@@ -164,8 +165,11 @@ With `admin_listen` set, `GET /stats` returns a snapshot of every backend:
 ```
 
 `active` is requests in progress, `failures` is failures in a row, and
-`requests` is attempts served in total. The endpoint shows internal addresses,
-so it runs on a separate port, which should stay on a loopback address.
+`requests` is attempts served in total.
+
+The admin server also serves Go's runtime profiles under `/debug/pprof/` (see
+[Performance](#performance)). Both show internal details, so it runs on a
+separate port, which should stay on a loopback address.
 
 ## Reloading the config
 
@@ -220,8 +224,59 @@ cmd/fakebackend      a controllable backend for testing
 internal/balancer    proxying, retries, timeouts, health checks, algorithms,
                      stats, access log
 internal/config      the YAML file format
-internal/admin       the /stats endpoint
-scripts/             run-backends.sh
+internal/admin       the /stats and /debug/pprof endpoints
+scripts/             run-backends.sh, bench.sh
+```
+
+## Performance
+
+Measured with [`wrk`](https://github.com/wg/wrk) on one laptop (AMD Ryzen 5
+5600H, 6 cores / 12 threads, Linux 7.2, Go 1.27.1), with the client, the load
+balancer and three fake backends all on the same machine. Backends answer at
+once with a few bytes, so these numbers show the load balancer's own cost, not
+a realistic workload.
+
+`wrk -t4 -c50 -d30s`, median of 3 runs, access log off:
+
+| Setup | Requests/sec | p50 | p99 |
+|---|---|---|---|
+| Direct to one backend | 240,563 | 136µs | 1.22ms |
+| Load balancer, round-robin | 31,440 | 1.41ms | 4.14ms |
+| Load balancer, least-connections | 29,707 | 1.47ms | 4.37ms |
+| Load balancer, weighted-round-robin | 31,193 | 1.42ms | 4.15ms |
+| Load balancer, weighted-least-connections | 29,569 | 1.48ms | 4.41ms |
+
+To reproduce (requires `wrk`; `RUNS`, `DURATION`, `CONNECTIONS` and `THREADS`
+can be overridden):
+
+```sh
+scripts/bench.sh
+```
+
+What the numbers show:
+
+- **A second hop is expensive next to a trivial backend.** Each request is
+  parsed twice and crosses four sockets instead of two. A CPU profile under
+  load puts about a quarter of the load balancer's time in socket reads and
+  writes, a fifth in memory allocation, and a tenth in garbage collection; the
+  load balancer's own code is about 6%. With all processes sharing 12 threads,
+  the machine is saturated, which widens the gap further.
+- **The algorithms cost about the same.** The least-connections variants are
+  about 5% slower, as each pick reads every backend's in-progress counter, and
+  identical backends give them nothing to gain.
+- **Connection reuse mattered most.** Go's default transport keeps only 2 idle
+  connections per backend, so under load most requests opened a new one: about
+  42,000 sockets piled up in `TIME_WAIT`, and round robin managed 21,000
+  requests/sec at a p50 of 2.15ms. Keeping up to 100 idle connections per
+  backend raised that by half.
+- **wrk is closed-loop:** each connection waits for a response before sending
+  the next request, so a stall delays the requests that would have measured
+  it, and p99 can look better than it is (coordinated omission).
+
+To profile, set `admin_listen` and, under load:
+
+```sh
+go tool pprof -http=: http://127.0.0.1:9000/debug/pprof/profile?seconds=20
 ```
 
 ## Design decisions

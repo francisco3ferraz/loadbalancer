@@ -13,6 +13,10 @@
 //	GET  /health              200 when healthy, 503 when marked down
 //	GET  /slow?d=3s           waits d before replying (default 5s)
 //	GET  /status/{code}       replies with the given status code
+//	GET  /stream?every=1s&n=5 sends a server-sent event every interval, n times
+//	                          (default: every second until the client leaves)
+//	GET  /ws                  accepts a Connection: Upgrade and echoes every
+//	                          byte back; a plain upgrade, no WebSocket framing
 //	POST /admin/health/down   make /health fail; the backend keeps serving
 //	POST /admin/health/up     make /health succeed again
 package main
@@ -22,12 +26,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -94,6 +100,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /slow", s.handleSlow)
 	mux.HandleFunc("GET /status/{code}", s.handleStatus)
+	mux.HandleFunc("GET /stream", s.handleStream)
+	mux.HandleFunc("GET /ws", s.handleUpgrade)
 	mux.HandleFunc("POST /admin/health/{state}", s.handleSetHealth)
 	return mux
 }
@@ -143,6 +151,92 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Backend", s.name)
 	w.WriteHeader(code)
 	fmt.Fprintf(w, "%d %s\n", code, http.StatusText(code))
+}
+
+func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	every := time.Second
+	if v := q.Get("every"); v != "" {
+		var err error
+		if every, err = time.ParseDuration(v); err != nil || every <= 0 {
+			http.Error(w, "every must be a positive duration like 500ms or 1s", http.StatusBadRequest)
+			return
+		}
+	}
+	n := 0 // 0 means until the client leaves
+	if v := q.Get("n"); v != "" {
+		var err error
+		if n, err = strconv.Atoi(v); err != nil || n < 0 {
+			http.Error(w, "n must be a non-negative number", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Without flushing, the events would sit in the server's buffer and reach
+	// the client in one lump, or not until the response ends.
+	rc := http.NewResponseController(w)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("X-Backend", s.name)
+
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for i := 1; n == 0 || i <= n; i++ {
+		select {
+		case <-ticker.C:
+		case <-r.Context().Done():
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s %d\n\n", s.name, i); err != nil {
+			return
+		}
+		if err := rc.Flush(); err != nil {
+			return
+		}
+	}
+}
+
+// handleUpgrade switches the connection to an echo protocol: after the 101
+// response, every byte the client sends comes straight back. That's all a
+// proxy sees of a WebSocket too, so it's enough to test one, without
+// implementing WebSocket framing.
+func (s *server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
+	if !headerHasToken(r.Header, "Connection", "upgrade") || r.Header.Get("Upgrade") == "" {
+		w.Header().Set("Connection", "Upgrade")
+		w.Header().Set("Upgrade", "echo")
+		http.Error(w, "want Connection: Upgrade and an Upgrade header", http.StatusUpgradeRequired)
+		return
+	}
+
+	// Hijack takes the connection away from the HTTP server: from here on
+	// it's a plain TCP stream, and the handler must write the 101 itself.
+	conn, brw, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		http.Error(w, "hijack: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer conn.Close()
+
+	fmt.Fprintf(brw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: %s\r\nX-Backend: %s\r\n\r\n", r.Header.Get("Upgrade"), s.name)
+	if err := brw.Flush(); err != nil {
+		return
+	}
+	// Read through brw, not conn: the server may already have buffered bytes
+	// the client sent right after its request. Copy returns when the client
+	// closes its side.
+	_, _ = io.Copy(conn, brw)
+}
+
+// headerHasToken reports whether the comma-separated header contains token,
+// ignoring case. Connection: keep-alive, Upgrade is a valid upgrade request.
+func headerHasToken(h http.Header, name, token string) bool {
+	for _, v := range h.Values(name) {
+		for t := range strings.SplitSeq(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(t), token) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *server) handleSetHealth(w http.ResponseWriter, r *http.Request) {

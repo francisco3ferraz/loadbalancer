@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,5 +95,67 @@ func TestSlow(t *testing.T) {
 
 	if rec := do(t, h, http.MethodGet, "/slow?d=banana"); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad duration: got %d, want 400", rec.Code)
+	}
+}
+
+func TestStream(t *testing.T) {
+	// A real server, not a recorder, so the events really go over the network.
+	srv := httptest.NewServer(newServer().routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/stream?every=10ms&n=3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "data: test 1\n\ndata: test 2\n\ndata: test 3\n\n"; string(body) != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+
+	if rec := do(t, newServer().routes(), http.MethodGet, "/stream?every=0s"); rec.Code != http.StatusBadRequest {
+		t.Errorf("zero interval: got %d, want 400", rec.Code)
+	}
+}
+
+func TestUpgradeEchoes(t *testing.T) {
+	srv := httptest.NewServer(newServer().routes())
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	io.WriteString(conn, "GET /ws HTTP/1.1\r\nHost: test\r\nConnection: keep-alive, Upgrade\r\nUpgrade: echo\r\n\r\n")
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("got %d, want 101", resp.StatusCode)
+	}
+
+	for _, msg := range []string{"hello\n", "again\n"} {
+		io.WriteString(conn, msg)
+		got, err := br.ReadString('\n')
+		if err != nil || got != msg {
+			t.Fatalf("echo: got %q, %v; want %q", got, err, msg)
+		}
+	}
+}
+
+func TestUpgradeRequiresHeaders(t *testing.T) {
+	if rec := do(t, newServer().routes(), http.MethodGet, "/ws"); rec.Code != http.StatusUpgradeRequired {
+		t.Errorf("plain GET: got %d, want 426", rec.Code)
 	}
 }

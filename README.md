@@ -60,6 +60,28 @@ curl 127.0.0.1:9000/stats
 
 Use a different config file with `-config path/to/file.yaml`.
 
+### With Docker
+
+```sh
+docker compose up --build
+curl localhost:8000           # backend1, backend2, backend3 in turn
+curl 127.0.0.1:9000/stats
+docker compose stop backend2  # traffic goes to the other two
+```
+
+This starts the load balancer and three fake backends, using
+[`docker/config.yaml`](docker/config.yaml). Inside a container `127.0.0.1` is
+that container, so the backends are reached by their Compose service names,
+and the admin server listens on all interfaces but is published only on the
+host's loopback.
+
+The image is built in two stages: the Go toolchain compiles static binaries,
+and only those are copied into a distroless image (about 7MB) that runs as a
+non-root user. It holds both programs: `/loadbalancer` by default, reading
+`/etc/loadbalancer/config.yaml`, and `/fakebackend` for the backends.
+`docker stop` sends `SIGTERM`, so requests in progress finish first; Compose
+waits up to 20s, above the load balancer's 15s drain.
+
 ## Configuration
 
 Settings come from a YAML file. Only `backends` is required. The shipped
@@ -226,6 +248,7 @@ internal/balancer    proxying, retries, timeouts, health checks, algorithms,
 internal/config      the YAML file format
 internal/admin       the /stats and /debug/pprof endpoints
 scripts/             run-backends.sh, bench.sh
+docker/              the config used by docker-compose.yml
 ```
 
 ## Performance

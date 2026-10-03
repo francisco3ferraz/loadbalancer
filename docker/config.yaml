@@ -1,0 +1,14 @@
+# Config for docker compose. See ../config.yaml for every setting.
+
+listen: ":8000"
+
+# Compose service names, which resolve to each container. 127.0.0.1 would
+# be the load balancer's own container.
+backends:
+  - http://backend1:8080
+  - http://backend2:8080
+  - http://backend3:8080
+
+# All interfaces inside the container, so the published port reaches it.
+# docker-compose.yml publishes it on the host's loopback only.
+admin_listen: ":9000"

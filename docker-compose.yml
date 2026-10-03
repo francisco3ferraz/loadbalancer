@@ -1,0 +1,28 @@
+services:
+  loadbalancer:
+    build: .
+    image: loadbalancer
+    volumes:
+      - ./docker/config.yaml:/etc/loadbalancer/config.yaml:ro
+    ports:
+      - "8000:8000"
+      - "127.0.0.1:9000:9000"
+    depends_on: [backend1, backend2, backend3]
+    # Above the drain on shutdown, request_timeout + 5s, so docker doesn't
+    # kill requests still finishing.
+    stop_grace_period: 20s
+
+  backend1:
+    image: loadbalancer
+    pull_policy: never
+    command: ["/fakebackend", "-port", "8080", "-name", "backend1"]
+
+  backend2:
+    image: loadbalancer
+    pull_policy: never
+    command: ["/fakebackend", "-port", "8080", "-name", "backend2"]
+
+  backend3:
+    image: loadbalancer
+    pull_policy: never
+    command: ["/fakebackend", "-port", "8080", "-name", "backend3"]

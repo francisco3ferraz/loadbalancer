@@ -24,6 +24,8 @@ a real failure mode, and each one is covered by tests.
 - **Long-lived connections:** WebSockets (and any other `Upgrade`) and
   server-sent events stay open for as long as both ends want, exempt from the
   request deadline and the server's write timeout.
+- **Request size limit:** bodies over `max_body_size` get a `413`, whether or
+  not the client declares the size up front, and backends aren't blamed.
 - **Graceful shutdown:** on Ctrl+C or `SIGTERM`, requests in progress finish
   before the process exits. A second Ctrl+C exits immediately.
 - **Stats:** an optional admin server with a JSON `/stats` endpoint.
@@ -61,6 +63,7 @@ Settings come from a YAML file. Only `backends` is required. The shipped
 | `attempt_timeout` | `5s` | How long one backend has to start answering |
 | `request_timeout` | `10s` | Total time for a request, across all retries; not applied to upgrades or event streams |
 | `max_failures` | `3` | Failures in a row that mark a backend down |
+| `max_body_size` | `1MB` | Largest request body accepted; bytes, or with `KB`, `MB` or `GB` |
 | `admin_listen` | off | Address of the admin server, e.g. `127.0.0.1:9000` |
 
 Backends can be plain URLs or carry a weight, and the two forms can be mixed:
@@ -104,13 +107,15 @@ The client's response depends on why the request couldn't be served:
 
 | Status | Meaning |
 |---|---|
+| `413 Content Too Large` | The request body was over `max_body_size` |
 | `502 Bad Gateway` | A backend was tried and failed |
 | `503 Service Unavailable` | No backend was up, so none was tried |
 | `504 Gateway Timeout` | `request_timeout` ran out |
 
-If the client disconnects, or `request_timeout` runs out, the backend isn't
-blamed: neither counts as a backend failure. Backends marked down come back
-when their health check succeeds again.
+If the client disconnects, sends a body over `max_body_size`, or
+`request_timeout` runs out, the backend isn't blamed: none of these counts as
+a backend failure. Backends marked down come back when their health check
+succeeds again.
 
 ## Admin server
 

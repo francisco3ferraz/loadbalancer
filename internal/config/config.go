@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -30,6 +33,7 @@ type Config struct {
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
 	MaxFailures         int           `yaml:"max_failures"`
 	HealthPath          string        `yaml:"health_path"`
+	MaxBodySize         ByteSize      `yaml:"max_body_size"`
 
 	// AdminListen is the address of the admin server, which serves /stats.
 	// Unlike the other settings, empty doesn't mean a default: it means
@@ -72,6 +76,56 @@ func (b *Backend) UnmarshalYAML(value *yaml.Node) error {
 	// the default decoding instead of calling UnmarshalYAML forever.
 	type plain Backend
 	return value.Decode((*plain)(b))
+}
+
+// ByteSize is a size in bytes. In the file it's written as a plain number of
+// bytes, or with a unit: KB, MB or GB, as in max_body_size: 10MB. Units are
+// powers of 1024, as in nginx, and any case is accepted.
+type ByteSize int64
+
+// byteUnits maps each unit to its size, longest suffix first so "MB" isn't
+// read as a number ending in "B".
+var byteUnits = []struct {
+	suffix string
+	size   int64
+}{
+	{"GB", 1 << 30},
+	{"MB", 1 << 20},
+	{"KB", 1 << 10},
+	{"B", 1},
+}
+
+// UnmarshalYAML reads a size such as 1048576, 512KB or 10MB.
+func (s *ByteSize) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: want a size such as 1048576 or 10MB", value.Line)
+	}
+	n, err := parseByteSize(value.Value)
+	if err != nil {
+		return fmt.Errorf("line %d: %w", value.Line, err)
+	}
+	*s = ByteSize(n)
+	return nil
+}
+
+// parseByteSize parses a whole, non-negative number of bytes with an
+// optional unit.
+func parseByteSize(text string) (int64, error) {
+	num, unit := strings.TrimSpace(text), int64(1)
+	for _, u := range byteUnits {
+		if len(num) > len(u.suffix) && strings.EqualFold(num[len(num)-len(u.suffix):], u.suffix) {
+			num, unit = strings.TrimSpace(num[:len(num)-len(u.suffix)]), u.size
+			break
+		}
+	}
+	n, err := strconv.ParseInt(num, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("size %q: want a whole number of bytes, optionally with KB, MB or GB, such as 10MB", text)
+	}
+	if n > math.MaxInt64/unit {
+		return 0, fmt.Errorf("size %q is too large", text)
+	}
+	return n * unit, nil
 }
 
 // Load reads a YAML config file and fills in the defaults for the settings
@@ -122,6 +176,7 @@ func (c Config) BalancerConfig() balancer.Config {
 		RequestTimeout: c.RequestTimeout,
 		MaxFailures:    c.MaxFailures,
 		HealthPath:     c.HealthPath,
+		MaxBodySize:    int64(c.MaxBodySize),
 	}
 }
 

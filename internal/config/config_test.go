@@ -33,6 +33,7 @@ attempt_timeout: 1500ms
 request_timeout: 1m
 max_failures: 5
 health_path: /healthz
+max_body_size: 10MB
 admin_listen: "127.0.0.1:9001"
 `)
 	got, err := Load(path)
@@ -48,6 +49,7 @@ admin_listen: "127.0.0.1:9001"
 		RequestTimeout:      time.Minute,
 		MaxFailures:         5,
 		HealthPath:          "/healthz",
+		MaxBodySize:         10 << 20,
 		AdminListen:         "127.0.0.1:9001",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -55,6 +57,9 @@ admin_listen: "127.0.0.1:9001"
 	}
 	if hp := got.BalancerConfig().HealthPath; hp != "/healthz" {
 		t.Errorf("balancer health path = %q, want %q", hp, "/healthz")
+	}
+	if size := got.BalancerConfig().MaxBodySize; size != 10<<20 {
+		t.Errorf("balancer max body size = %d, want %d", size, 10<<20)
 	}
 }
 
@@ -83,6 +88,8 @@ func TestLoadConfigErrors(t *testing.T) {
 		{"bad duration", "backends: [http://a:1]\nrequest_timeout: 5 seconds\n", "line 2"},
 		{"bare number duration", "backends: [http://a:1]\nrequest_timeout: 5\n", "line 2"},
 		{"negative interval", "backends: [http://a:1]\nhealth_check_interval: -1s\n", "health_check_interval"},
+		{"bad size", "backends: [http://a:1]\nmax_body_size: 10 megabytes\n", "line 2"},
+		{"size as a list", "backends: [http://a:1]\nmax_body_size: [10MB]\n", "line 2"},
 		{"empty file", "", "empty"},
 		{"not yaml", "backends: [unclosed\n", "load config"},
 	}
@@ -93,6 +100,32 @@ func TestLoadConfigErrors(t *testing.T) {
 				t.Errorf("err = %v, want an error mentioning %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestParseByteSize(t *testing.T) {
+	valid := map[string]int64{
+		"0":            0,
+		"1048576":      1 << 20,
+		"512B":         512,
+		"512KB":        512 << 10,
+		"10MB":         10 << 20,
+		"10mb":         10 << 20,
+		"10 MB":        10 << 20,
+		"2GB":          2 << 30,
+		" 1KB ":        1 << 10,
+		"8589934591GB": 8589934591 << 30, // the most GB an int64 can hold
+	}
+	for text, want := range valid {
+		if got, err := parseByteSize(text); err != nil || got != want {
+			t.Errorf("parseByteSize(%q) = %d, %v; want %d", text, got, err, want)
+		}
+	}
+
+	for _, text := range []string{"", "MB", "-1MB", "1.5MB", "10TB", "ten", "10M", "1GBB", "8589934592GB"} {
+		if got, err := parseByteSize(text); err == nil {
+			t.Errorf("parseByteSize(%q) = %d, want an error", text, got)
+		}
 	}
 }
 

@@ -29,8 +29,9 @@ type backend struct {
 	weight int
 }
 
-// failedKey is the context key under which ServeHTTP stores a *bool that
-// handleError sets when an attempt fails.
+// failedKey is the context key under which ServeHTTP stores a *error that
+// handleError sets to the error when an attempt fails, so ServeHTTP can tell
+// why it failed.
 type failedKey struct{}
 
 // streamKey is the context key under which ServeHTTP stores a func() that
@@ -56,12 +57,12 @@ func newBackend(u *url.URL, transport http.RoundTripper, maxFailures int32, weig
 // failure to ServeHTTP, which decides whether to retry, and marks the backend
 // down when the failure says it's unhealthy.
 func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error) {
-	if p, ok := r.Context().Value(failedKey{}).(*bool); ok {
-		*p = true
+	if p, ok := r.Context().Value(failedKey{}).(*error); ok {
+		*p = err
 	}
 
 	// When the request's context has ended, the backend isn't to blame.
-	switch ctxErr := r.Context().Err(); {
+	switch ctxErr := context.Cause(r.Context()); {
 	case errors.Is(ctxErr, context.DeadlineExceeded):
 		log.Printf("%s: request deadline exceeded: %v", b.url.Host, err)
 		return
@@ -70,8 +71,16 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 		return
 	}
 
+	// The client sent too much, which isn't the backend's fault either.
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		log.Printf("%s: request body over %d bytes", b.url.Host, maxErr.Limit)
+		return
+	}
+
 	log.Printf("%s failed: %v", b.url.Host, err)
 	dead := false
+
 	var opErr *net.OpError
 	if errors.As(err, &opErr) && opErr.Op == "dial" {
 		dead = true

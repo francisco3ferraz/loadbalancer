@@ -22,6 +22,7 @@ type Balancer struct {
 	client         *http.Client  // for health checks
 	requestTimeout time.Duration // total time per request, across retries
 	healthPath     string        // path requested by health checks
+	maxBodySize    int64         // largest request body accepted, in bytes
 }
 
 // New returns a Balancer for cfg. It returns an error if cfg is invalid: no
@@ -33,8 +34,8 @@ func New(cfg Config) (*Balancer, error) {
 	if len(cfg.Backends) == 0 {
 		return nil, errors.New("no backends given")
 	}
-	if cfg.AttemptTimeout < 0 || cfg.RequestTimeout < 0 || cfg.MaxFailures < 0 {
-		return nil, errors.New("timeouts and max failures must not be negative")
+	if cfg.AttemptTimeout < 0 || cfg.RequestTimeout < 0 || cfg.MaxFailures < 0 || cfg.MaxBodySize < 0 {
+		return nil, errors.New("timeouts, max failures and max body size must not be negative")
 	}
 	// Only a path: a query or fragment would be escaped into the path by
 	// JoinPath and silently check the wrong URL.
@@ -56,6 +57,7 @@ func New(cfg Config) (*Balancer, error) {
 		client:         &http.Client{Timeout: 2 * time.Second},
 		requestTimeout: cfg.RequestTimeout,
 		healthPath:     cfg.HealthPath,
+		maxBodySize:    cfg.MaxBodySize,
 		picker:         p,
 	}
 	for _, be := range cfg.Backends {
@@ -79,9 +81,17 @@ func New(cfg Config) (*Balancer, error) {
 }
 
 func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	failed := false
+	// A body that declares its size can be rejected before any backend is
+	// picked. One that doesn't is cut off by MaxBytesReader once it passes
+	// the limit, which reaches handleError as a *http.MaxBytesError.
+	if r.ContentLength > lb.maxBodySize {
+		bodyTooLarge(w)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, lb.maxBodySize)
 
-	r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failed))
+	var failErr error
+	r = r.WithContext(context.WithValue(r.Context(), failedKey{}, &failErr))
 
 	if !isUpgrade(r) {
 		// A timer instead of WithTimeout, so the deadline can be lifted when
@@ -106,11 +116,17 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b := lb.picker.pick(candidates, r)
 		candidates = slices.DeleteFunc(candidates, func(c *backend) bool { return c == b })
 
-		failed = false
+		failErr = nil
 		b.serve(w, r)
 
-		if !failed {
+		if failErr == nil {
 			b.failures.Store(0)
+			return
+		}
+
+		var maxErr *http.MaxBytesError
+		if errors.As(failErr, &maxErr) {
+			bodyTooLarge(w)
 			return
 		}
 
@@ -128,12 +144,17 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if failed {
+	if failErr != nil {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
 	}
 
 	http.Error(w, "no backends available", http.StatusServiceUnavailable)
+}
+
+// bodyTooLarge replies 413, for a request body over the size limit.
+func bodyTooLarge(w http.ResponseWriter) {
+	http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 }
 
 // aliveBackends returns the backends currently marked alive, in a new slice

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -134,6 +135,10 @@ func TestNewErrors(t *testing.T) {
 		"negative timeout": {
 			Backends:       urls("http://127.0.0.1:1"),
 			RequestTimeout: -time.Second,
+		},
+		"negative max body size": {
+			Backends:    urls("http://127.0.0.1:1"),
+			MaxBodySize: -1,
 		},
 		"bad algorithm": {
 			Backends:  urls("http://127.0.0.1:1"),
@@ -411,6 +416,76 @@ func TestStreamOutlivesTimeouts(t *testing.T) {
 		if !tt.wantAll && err == nil && got == n {
 			t.Errorf("%s: got all %d events; want it cut off at the deadline", tt.contentType, n)
 		}
+	}
+}
+
+// TestBodySizeLimit checks that a request declaring a body over the limit is
+// rejected with a 413 before it reaches any backend, while one exactly at
+// the limit goes through.
+func TestBodySizeLimit(t *testing.T) {
+	const limit = 10
+	var called atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		io.Copy(io.Discard, r.Body)
+	}))
+	t.Cleanup(srv.Close)
+	lb := newBalancer(t, Config{Backends: urls(srv.URL), MaxBodySize: limit})
+
+	tests := []struct {
+		size       int
+		want       int
+		wantCalled bool
+	}{
+		{limit, http.StatusOK, true},
+		{limit + 1, http.StatusRequestEntityTooLarge, false},
+	}
+	for _, tt := range tests {
+		called.Store(false)
+		// A strings.Reader body sets ContentLength, as a client declaring
+		// its size would.
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", tt.size)))
+		rec := httptest.NewRecorder()
+		lb.ServeHTTP(rec, req)
+
+		if rec.Code != tt.want {
+			t.Errorf("%d bytes: status = %d, want %d", tt.size, rec.Code, tt.want)
+		}
+		if called.Load() != tt.wantCalled {
+			t.Errorf("%d bytes: backend called = %v, want %v", tt.size, called.Load(), tt.wantCalled)
+		}
+	}
+}
+
+// TestUndeclaredBodySizeLimit checks that a body sent without a declared
+// size is cut off with a 413 once it passes the limit, and that the backend
+// isn't blamed for it.
+func TestUndeclaredBodySizeLimit(t *testing.T) {
+	const limit = 1000
+	lb := newBalancer(t, Config{
+		Backends:    urls(namedBackend(t, "a")),
+		MaxBodySize: limit,
+		MaxFailures: 1, // one failure counted would mark it down
+	})
+	// A real server: a recorder can't receive a body of unknown size.
+	srv := httptest.NewServer(lb)
+	defer srv.Close()
+
+	// MultiReader hides the length, so the client sends the body chunked
+	// and Content-Length is unknown (-1).
+	body := io.MultiReader(strings.NewReader(strings.Repeat("x", limit+1)))
+	resp, err := http.Post(srv.URL, "text/plain", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+	b := lb.backends[0]
+	if b.failures.Load() != 0 || !b.alive.Load() {
+		t.Errorf("failures = %d, alive = %v; want 0, true", b.failures.Load(), b.alive.Load())
 	}
 }
 

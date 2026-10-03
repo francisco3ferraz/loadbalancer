@@ -10,6 +10,7 @@ const (
 	defaultAttemptTimeout = 5 * time.Second
 	defaultMaxFailures    = 3
 	defaultHealthPath     = "/health"
+	defaultMaxBodySize    = 1 << 20 // 1MB
 )
 
 // Algorithm names a way of choosing which backend gets each request.
@@ -69,6 +70,11 @@ type Config struct {
 	// http://host/api is checked at http://host/api/healthz. A backend is
 	// healthy when it answers 200. Default "/health".
 	HealthPath string
+
+	// MaxBodySize is the largest request body accepted, in bytes. Larger
+	// requests get a 413 without reaching any backend, or, when the client
+	// doesn't declare the size, as soon as the limit is passed. Default 1 MB.
+	MaxBodySize int64
 }
 
 // withDefaults returns a copy of c with unset fields filled in.
@@ -87,6 +93,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.HealthPath == "" {
 		c.HealthPath = defaultHealthPath
+	}
+	if c.MaxBodySize == 0 {
+		c.MaxBodySize = defaultMaxBodySize
 	}
 
 	return c

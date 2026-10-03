@@ -40,6 +40,11 @@ request_timeout: 10s
 # down immediately. Default 3.
 max_failures: 3
 
+# Largest request body accepted. Larger requests get a 413 and never reach
+# a backend. A plain number of bytes, or a size with KB, MB or GB (powers of
+# 1024, as in nginx's client_max_body_size). Default 1MB.
+max_body_size: 1MB
+
 # Address of the admin server, which serves GET /stats (a JSON snapshot of
 # every backend). It shows internal addresses, so keep it on 127.0.0.1,
 # where only this machine can reach it; ":9000" would accept connections

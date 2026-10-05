@@ -2,9 +2,41 @@
 
 [![CI](https://github.com/francisco3ferraz/loadbalancer/actions/workflows/ci.yml/badge.svg)](https://github.com/francisco3ferraz/loadbalancer/actions/workflows/ci.yml)
 
-An HTTP (layer 7) load balancer written in Go, using only the standard library
-plus a YAML parser. Built as a learning project: each feature exists to handle
-a real failure mode, and each one is covered by tests.
+An HTTP (layer 7) load balancer in Go, using only the standard library plus a
+YAML parser. Four algorithms, active and passive health checks, retries, and
+config reload without dropping a request. About 60,000 requests/sec on a
+laptop, with Prometheus metrics and a 7MB Docker image.
+
+```mermaid
+flowchart TB
+    client([Client]) -->|HTTP| listener
+
+    subgraph process [loadbalancer process]
+        listener["Listener :8000<br/>access log"] --> swapper["Swapper<br/>atomic.Pointer"]
+        subgraph balancer [Balancer]
+            picker["Picker<br/>round robin · least conn<br/>+ weighted variants"] --> proxy["ReverseProxy<br/>retries · deadlines<br/>keep-alive pool"]
+            state[("Backend state<br/>alive · active · failures")]
+            health["Health checker<br/>all backends at once"]
+        end
+        swapper --> picker
+        state -.->|alive only| picker
+        proxy -.->|failures| state
+        health -.->|up / down| state
+        reload["Reload<br/>load · validate · build"] -->|"Swap()"| swapper
+        admin["Admin :9000<br/>/stats · /metrics · pprof"] -.->|"Stats()"| swapper
+    end
+
+    proxy --> backends[(Backends)]
+    health -->|GET /health| backends
+    sighup([kill -HUP]) --> reload
+    prometheus([Prometheus]) -->|scrape| admin
+```
+
+A request goes through the [access log](#access-log), the swapper (which a
+[reload](#reloading-the-config) points at a new balancer), and an
+[algorithm](#algorithms) that only sees live backends; on failure it's
+[retried or answered with a 502, 503 or 504](#how-failures-are-handled). Each
+feature exists to handle a real failure mode, and each is covered by tests.
 
 ## Features
 

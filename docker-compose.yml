@@ -4,13 +4,39 @@ services:
     image: loadbalancer
     volumes:
       - ./docker/config.yaml:/etc/loadbalancer/config.yaml:ro
+      - certs:/etc/loadbalancer/certs:ro
     ports:
       - "8000:8000"
       - "127.0.0.1:9000:9000"
-    depends_on: [backend1, backend2, backend3]
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+      backend1:
+        condition: service_started
+      backend2:
+        condition: service_started
+      backend3:
+        condition: service_started
     # Above the drain on shutdown, request_timeout + 5s, so docker doesn't
     # kill requests still finishing.
     stop_grace_period: 20s
+
+  # Makes a self-signed certificate for localhost on the first run, kept in
+  # the certs volume; docker compose down -v throws it away. The Go image is
+  # the one the load balancer is built with, so nothing more is pulled.
+  certs:
+    image: golang:1.27
+    volumes:
+      - certs:/certs
+    working_dir: /certs
+    command:
+      - sh
+      - -c
+      - |
+        [ -f cert.pem ] && exit 0
+        go run /usr/local/go/src/crypto/tls/generate_cert.go --host localhost,127.0.0.1
+        # The key is only readable by its owner: the distroless nonroot user.
+        chown 65532:65532 cert.pem key.pem
 
   prometheus:
     image: prom/prometheus:v3.15.0
@@ -34,3 +60,6 @@ services:
     image: loadbalancer
     pull_policy: never
     command: ["/fakebackend", "-port", "8080", "-name", "backend3"]
+
+volumes:
+  certs:

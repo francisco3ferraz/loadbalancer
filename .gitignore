@@ -1,1 +1,4 @@
 bin/
+
+# Certificates and keys made by the README examples
+*.pem

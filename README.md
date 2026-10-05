@@ -99,7 +99,8 @@ Use a different config file with `-config path/to/file.yaml`.
 
 ```sh
 docker compose up --build
-curl localhost:8000           # backend1, backend2, backend3 in turn
+docker compose cp loadbalancer:/etc/loadbalancer/certs/cert.pem .
+curl --cacert cert.pem https://localhost:8000   # backend1, backend2, backend3 in turn
 curl 127.0.0.1:9000/stats
 docker compose stop backend2  # traffic goes to the other two
 ```
@@ -118,6 +119,13 @@ non-root user. It holds both programs: `/loadbalancer` by default, reading
 `/etc/loadbalancer/config.yaml`, and `/fakebackend` for the backends.
 `docker stop` sends `SIGTERM`, so requests in progress finish first; Compose
 waits up to 20s, above the load balancer's 15s drain.
+
+The load balancer serves HTTPS with a self-signed certificate for
+`localhost`, which a one-off `certs` service makes on the first run and keeps
+in a volume, so it survives restarts; `docker compose down -v` deletes it and
+the next `up` makes a new one. The admin server and the backends stay on
+plain HTTP. `docker compose kill -s HUP loadbalancer` reloads the config and
+certificate.
 
 ## Configuration
 

@@ -9,6 +9,10 @@ backends:
   - http://backend2:8080
   - http://backend3:8080
 
+# Made by the certs service in docker-compose.yml.
+tls_cert: /etc/loadbalancer/certs/cert.pem
+tls_key: /etc/loadbalancer/certs/key.pem
+
 # All interfaces inside the container, so the published port reaches it.
 # docker-compose.yml publishes it on the host's loopback only.
 admin_listen: ":9000"

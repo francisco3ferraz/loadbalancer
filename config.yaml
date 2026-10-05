@@ -60,3 +60,12 @@ access_log: true
 # where only this machine can reach it; ":9000" would accept connections
 # from anywhere. Leave it out to turn the admin server off.
 admin_listen: "127.0.0.1:9000"
+
+# Serve HTTPS, and HTTP/2 to clients that support it, with this certificate
+# and private key, both PEM files. Set both or neither. For a certificate
+# signed by a CA, tls_cert holds the server's certificate followed by the
+# intermediates. A reload rereads both files, so a renewed certificate is
+# picked up by kill -HUP; turning TLS on or off needs a restart. Leave them
+# out to serve plain HTTP. For example:
+# tls_cert: /etc/loadbalancer/cert.pem
+# tls_key: /etc/loadbalancer/key.pem

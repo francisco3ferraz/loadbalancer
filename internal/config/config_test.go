@@ -35,6 +35,8 @@ max_body_size: 10MB
 retry_unavailable: true
 access_log: false
 admin_listen: "127.0.0.1:9001"
+tls_cert: /etc/lb/cert.pem
+tls_key: /etc/lb/key.pem
 `)
 	got, err := Load(path)
 	if err != nil {
@@ -53,6 +55,8 @@ admin_listen: "127.0.0.1:9001"
 		RetryUnavailable:    true,
 		AccessLog:           new(false),
 		AdminListen:         "127.0.0.1:9001",
+		TLSCert:             "/etc/lb/cert.pem",
+		TLSKey:              "/etc/lb/key.pem",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
@@ -62,6 +66,9 @@ admin_listen: "127.0.0.1:9001"
 	}
 	if got.AccessLogEnabled() {
 		t.Error("access_log: false left the access log on")
+	}
+	if !got.TLSEnabled() {
+		t.Error("tls_cert and tls_key left TLS off")
 	}
 	if !got.BalancerConfig().RetryUnavailable {
 		t.Error("retry_unavailable didn't reach the balancer config")
@@ -86,6 +93,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if !got.AccessLogEnabled() {
 		t.Error("access log off by default, want on")
 	}
+	if got.TLSEnabled() {
+		t.Error("TLS on by default, want off")
+	}
 	if got.EffectiveRequestTimeout() != 10*time.Second {
 		t.Errorf("EffectiveRequestTimeout() = %s, want the balancer's default of 10s", got.EffectiveRequestTimeout())
 	}
@@ -103,6 +113,8 @@ func TestLoadConfigErrors(t *testing.T) {
 		{"size as a list", "backends: [http://a:1]\nmax_body_size: [10MB]\n", "line 2"},
 		{"empty file", "", "empty"},
 		{"not yaml", "backends: [unclosed\n", "load config"},
+		{"tls cert without key", "backends: [http://a:1]\ntls_cert: cert.pem\n", "tls_key"},
+		{"tls key without cert", "backends: [http://a:1]\ntls_key: key.pem\n", "tls_cert"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -43,6 +43,11 @@ type Config struct {
 	// Unlike the other settings, empty doesn't mean a default: it means
 	// the admin server is off.
 	AdminListen string `yaml:"admin_listen"`
+
+	// TLSCert and TLSKey are paths to PEM files. With both set, clients
+	// connect over HTTPS; with neither, over plain HTTP.
+	TLSCert string `yaml:"tls_cert"`
+	TLSKey  string `yaml:"tls_key"`
 }
 
 // Backend is one entry in the backends list. It can be written as a plain
@@ -162,6 +167,9 @@ func Load(path string) (Config, error) {
 	case cfg.HealthCheckInterval < 0:
 		return Config{}, fmt.Errorf("load config %s: health_check_interval must be positive", path)
 	}
+	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
+		return Config{}, fmt.Errorf("load config %s: tls_cert and tls_key must be set together", path)
+	}
 	return cfg, nil
 }
 
@@ -187,6 +195,11 @@ func (c Config) BalancerConfig() balancer.Config {
 // the file sets access_log: false.
 func (c Config) AccessLogEnabled() bool {
 	return c.AccessLog == nil || *c.AccessLog
+}
+
+// TLSEnabled reports whether clients connect over HTTPS.
+func (c Config) TLSEnabled() bool {
+	return c.TLSCert != ""
 }
 
 // EffectiveRequestTimeout is the balancer's request timeout as it will

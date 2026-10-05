@@ -3,8 +3,8 @@
 [![CI](https://github.com/francisco3ferraz/loadbalancer/actions/workflows/ci.yml/badge.svg)](https://github.com/francisco3ferraz/loadbalancer/actions/workflows/ci.yml)
 
 An HTTP (layer 7) load balancer in Go, using only the standard library plus a
-YAML parser. Four algorithms, active and passive health checks, retries, and
-config reload without dropping a request. About 60,000 requests/sec on a
+YAML parser. Four algorithms, active and passive health checks, retries, TLS
+with HTTP/2, and config reload without dropping a request. About 60,000 requests/sec on a
 laptop, with Prometheus metrics and a 7MB Docker image.
 
 ```mermaid
@@ -12,7 +12,7 @@ flowchart TB
     client([Client]) -->|HTTP| listener
 
     subgraph process [loadbalancer process]
-        listener["Listener :8000<br/>access log"] --> swapper["Swapper<br/>atomic.Pointer"]
+        listener["Listener :8000<br/>TLS · HTTP/2 · access log"] --> swapper["Swapper<br/>atomic.Pointer"]
         subgraph balancer [Balancer]
             picker["Picker<br/>round robin · least conn<br/>+ weighted variants"] --> proxy["ReverseProxy<br/>retries · deadlines<br/>keep-alive pool"]
             state[("Backend state<br/>alive · active · failures")]
@@ -66,6 +66,9 @@ feature exists to handle a real failure mode, and each is covered by tests.
 - **Config reload:** `kill -HUP <pid>` applies an edited config without
   closing the port or failing a request; an invalid config is rejected and
   the old one keeps running.
+- **TLS termination:** with a certificate and key, clients connect over HTTPS,
+  and HTTP/2 if they support it; backends are still reached over plain HTTP.
+  A reload picks up a renewed certificate without closing a connection.
 - **Forwarding headers:** backends get `X-Forwarded-For`, `X-Forwarded-Host`
   and `X-Forwarded-Proto`, set by the load balancer and never copied from the
   client, so they can't be forged. The client's `Host` is kept.
@@ -134,6 +137,7 @@ Settings come from a YAML file. Only `backends` is required. The shipped
 | `access_log` | `true` | Log one line per request to stdout |
 | `max_body_size` | `1MB` | Largest request body accepted; bytes, or with `KB`, `MB` or `GB` |
 | `admin_listen` | off | Address of the admin server, e.g. `127.0.0.1:9000` |
+| `tls_cert`, `tls_key` | off | PEM files of the certificate and private key; set both to serve HTTPS |
 
 Backends can be plain URLs or carry a weight, and the two forms can be mixed:
 
@@ -147,6 +151,29 @@ backends:
 The config is checked at startup: unknown keys (such as a typo like
 `algoritm`), invalid durations or sizes, negative values and unknown algorithms
 are reported as errors, and the load balancer doesn't start.
+
+## TLS
+
+With `tls_cert` and `tls_key` set, the load balancer terminates TLS: it does
+the handshake and decrypts, then proxies plain HTTP to the backends, so only
+it holds the private key. HTTP/2 is negotiated during the handshake (ALPN)
+with clients that offer it, others get HTTP/1.1. Plain HTTP sent to the TLS
+port gets a `400`.
+
+```sh
+# A self-signed certificate for trying it out
+go run "$(go env GOROOT)/src/crypto/tls/generate_cert.go" --host localhost
+curl -v --cacert cert.pem https://localhost:8000   # "ALPN: server accepted h2"
+```
+
+Backends see `X-Forwarded-Proto: https`. Certificates expire, so a reload
+(`kill -HUP`) rereads both files, and new connections get the new
+certificate while open ones keep theirs. A certificate that can't be loaded
+fails startup, or is rejected on reload with the old one kept serving.
+
+HTTP/2 has no `Upgrade`, and Go's server doesn't offer WebSockets over HTTP/2
+(RFC 8441), so clients open a separate HTTP/1.1 connection for a WebSocket,
+which is proxied as without TLS. Event streams work over both.
 
 ## Algorithms
 
@@ -260,7 +287,7 @@ A reload starts afresh: every backend begins alive, with its failure count and
 
 Some settings are fixed once the process has started, so a reload that
 changes them is rejected as a whole: `listen`, `admin_listen`, `access_log`,
-and raising `request_timeout` above its value at startup (the server's own
+turning TLS on or off (changing the certificate is fine), and raising `request_timeout` above its value at startup (the server's own
 timeouts were sized from it). Restart to change these.
 
 ## Testing
@@ -392,7 +419,8 @@ go tool pprof -http=: http://127.0.0.1:9000/debug/pprof/profile?seconds=20
 ## Not included
 
 These are real load balancer features, deliberately left out of scope:
-TLS termination, HTTP/2 to backends, metrics by status code and latency
+redirecting HTTP to HTTPS and HSTS, TLS or HTTP/2 to backends, client
+certificates (mTLS), automatic certificates (ACME), metrics by status code and latency
 histograms (`/metrics` has per-backend counts only), structured error
 logs (only the access log is structured), sticky sessions (consistent hashing), latency-based algorithms,
 trusted proxies (behind a CDN or another proxy, forwarding headers describe

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -59,14 +60,11 @@ func main() {
 // configured with port 0 can find its ports. adminAddr is nil when there's
 // no admin server.
 func run(ctx context.Context, configPath string, stdout io.Writer, reload <-chan os.Signal, ready func(addr, adminAddr net.Addr)) error {
-	cfg, err := config.Load(configPath)
+	gen, err := build(configPath)
 	if err != nil {
 		return err
 	}
-	lb, err := balancer.New(cfg.BalancerConfig())
-	if err != nil {
-		return fmt.Errorf("config %s: %w", configPath, err)
-	}
+	cfg, lb := gen.cfg, gen.lb
 
 	// Room for a request that uses its whole timeout to still be answered.
 	drainTimeout := cfg.EffectiveRequestTimeout() + 5*time.Second
@@ -85,6 +83,14 @@ func run(ctx context.Context, configPath string, stdout io.Writer, reload <-chan
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      drainTimeout,
 		IdleTimeout:       60 * time.Second,
+	}
+	// Through GetCertificate rather than files given to ServeTLS, so a
+	// reload can replace the certificate. ServeTLS still sets up HTTP/2.
+	var certs *certStore
+	if gen.cert != nil {
+		certs = &certStore{}
+		certs.current.Store(gen.cert)
+		srv.TLSConfig = &tls.Config{GetCertificate: certs.getCertificate}
 	}
 	// Not ListenAndServe: a port in use is reported here, and the real
 	// address is known even for port 0.
@@ -111,8 +117,14 @@ func run(ctx context.Context, configPath string, stdout io.Writer, reload <-chan
 
 	// One slot per server, so neither blocks if nobody reads.
 	errc := make(chan error, 2)
-	go func() { errc <- srv.Serve(ln) }()
-	log.Printf("listening on %s with %d backends", ln.Addr(), len(cfg.Backends))
+	scheme := "http"
+	if certs != nil {
+		scheme = "https"
+		go func() { errc <- srv.ServeTLS(ln, "", "") }()
+	} else {
+		go func() { errc <- srv.Serve(ln) }()
+	}
+	log.Printf("listening on %s://%s with %d backends", scheme, ln.Addr(), len(cfg.Backends))
 	var adminAddr net.Addr
 	if adminSrv != nil {
 		go func() { errc <- adminSrv.Serve(adminLn) }()
@@ -133,17 +145,20 @@ serving:
 			break serving
 		case <-reload:
 			// Against the startup config, which the servers were built from.
-			next, nextLB, err := loadReload(configPath, cfg)
+			next, err := loadReload(configPath, cfg)
 			if err != nil {
 				log.Printf("reload: %v; keeping the current config", err)
 				continue
 			}
 			// New checks start before the old stop, so there's no gap.
-			stopNext := startHealthChecks(ctx, nextLB, next.HealthCheckInterval)
-			swapper.Swap(nextLB)
+			stopNext := startHealthChecks(ctx, next.lb, next.cfg.HealthCheckInterval)
+			swapper.Swap(next.lb)
+			if certs != nil {
+				certs.current.Store(next.cert)
+			}
 			stopHealth()
 			stopHealth = stopNext
-			log.Printf("reloaded %s: %d backends", configPath, len(next.Backends))
+			log.Printf("reloaded %s: %d backends", configPath, len(next.cfg.Backends))
 		}
 	}
 	log.Print("shutting down")
@@ -180,20 +195,45 @@ func startHealthChecks(ctx context.Context, lb *balancer.Balancer, interval time
 	}
 }
 
-// loadReload rereads the config at path and builds a balancer from it.
-func loadReload(path string, startup config.Config) (config.Config, *balancer.Balancer, error) {
-	next, err := config.Load(path)
+// generation is what one reading of the config file builds.
+type generation struct {
+	cfg  config.Config
+	lb   *balancer.Balancer
+	cert *tls.Certificate // nil without TLS
+}
+
+// build reads the config at path and builds everything it describes, so a
+// bad file, balancer setting or certificate is found before any of it is
+// used.
+func build(path string) (generation, error) {
+	cfg, err := config.Load(path)
 	if err != nil {
-		return config.Config{}, nil, err
+		return generation{}, err
 	}
-	if err := checkReloadable(startup, next); err != nil {
-		return config.Config{}, nil, err
-	}
-	lb, err := balancer.New(next.BalancerConfig())
+	lb, err := balancer.New(cfg.BalancerConfig())
 	if err != nil {
-		return config.Config{}, nil, fmt.Errorf("config %s: %w", path, err)
+		return generation{}, fmt.Errorf("config %s: %w", path, err)
 	}
-	return next, lb, nil
+	gen := generation{cfg: cfg, lb: lb}
+	if cfg.TLSEnabled() {
+		if gen.cert, err = loadCert(cfg.TLSCert, cfg.TLSKey); err != nil {
+			return generation{}, err
+		}
+	}
+	return gen, nil
+}
+
+// loadReload rereads the config at path and builds a new generation from
+// it, provided it changes nothing that needs a restart.
+func loadReload(path string, startup config.Config) (generation, error) {
+	gen, err := build(path)
+	if err != nil {
+		return generation{}, err
+	}
+	if err := checkReloadable(startup, gen.cfg); err != nil {
+		return generation{}, err
+	}
+	return gen, nil
 }
 
 // checkReloadable returns an error if next changes a setting that only a
@@ -207,6 +247,10 @@ func checkReloadable(startup, next config.Config) error {
 		return errors.New("admin_listen can't change without a restart")
 	case next.AccessLogEnabled() != startup.AccessLogEnabled():
 		return errors.New("access_log can't change without a restart")
+	// The certificate can change, but not whether the port speaks HTTP or
+	// HTTPS: that's decided once, when serving starts.
+	case next.TLSEnabled() != startup.TLSEnabled():
+		return errors.New("tls_cert and tls_key can't be added or removed without a restart")
 	// The write timeout was sized from the startup value; a longer request
 	// timeout would have its 504s cut off.
 	case next.EffectiveRequestTimeout() > startup.EffectiveRequestTimeout():

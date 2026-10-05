@@ -99,7 +99,9 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var failErr error
 	var canRetry bool
+	var sent time.Time
 	ctx := context.WithValue(r.Context(), failedKey{}, &failErr)
+	ctx = context.WithValue(ctx, sentKey{}, &sent)
 	r = r.WithContext(context.WithValue(ctx, retryKey{}, &canRetry))
 
 	if !isUpgrade(r) {
@@ -131,6 +133,7 @@ func (lb *Balancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		failErr = nil
 		canRetry = lb.retryStatus && retryable && len(candidates) > 0
+		sent = time.Now()
 		b.serve(w, r)
 
 		if failErr == nil {

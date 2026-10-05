@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 type backend struct {
@@ -22,6 +23,7 @@ type backend struct {
 	active        atomic.Int64
 	requests      atomic.Uint64
 	totalFailures atomic.Uint64
+	latency       histogram // time until response headers, per attempt
 
 	maxFailures int32 // in a row; connection errors mark it down at once
 	weight      int   // never changes, so it needs no synchronisation
@@ -36,6 +38,10 @@ type failedKey struct{}
 // before each attempt, telling modifyResponse whether a 502 or 503 may be
 // retried on another backend. When it can't, the response goes to the client.
 type retryKey struct{}
+
+// sentKey is the context key under which ServeHTTP stores a *time.Time, set
+// to when each attempt starts, so modifyResponse can time the backend.
+type sentKey struct{}
 
 // errRetryStatus is returned by modifyResponse to turn a 502 or 503 into a
 // failed attempt, which ServeHTTP retries.
@@ -122,10 +128,18 @@ func (b *backend) handleError(w http.ResponseWriter, r *http.Request, err error)
 
 // modifyResponse is the proxy's ModifyResponse hook, which runs when the
 // backend's response headers arrive, before anything reaches the client.
-// It rejects a 502 or 503 that may be retried, lifts the request deadline
+// It records how long the backend took to answer, rejects a 502 or 503
+// that may be retried, lifts the request deadline
 // for server-sent events, which stay open for as long as the backend sends
 // them, and tells the access log about protocol switches, which it can't see.
 func (b *backend) modifyResponse(resp *http.Response) error {
+	// Until the headers, not the whole body: a stream or a slow client
+	// would otherwise count as a slow backend. Any status is an answer, so
+	// a 503 is timed too.
+	if sent, ok := resp.Request.Context().Value(sentKey{}).(*time.Time); ok {
+		b.latency.observe(time.Since(*sent))
+	}
+
 	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable {
 		if retry, ok := resp.Request.Context().Value(retryKey{}).(*bool); ok && *retry {
 			// The proxy closes the body and calls handleError instead.

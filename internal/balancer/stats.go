@@ -14,6 +14,10 @@ type BackendStats struct {
 	Failures      int32  `json:"failures"`       // failures in a row
 	Requests      uint64 `json:"requests"`       // attempts served in total
 	TotalFailures uint64 `json:"total_failures"` // failures in total
+
+	// Left out of /stats: a histogram only means something as rates over
+	// time, which is what Prometheus makes of it on /metrics.
+	Latency Latency `json:"-"`
 }
 
 // Stats returns a snapshot of every backend. Each value is read atomically,
@@ -28,6 +32,7 @@ func (lb *Balancer) Stats() Stats {
 			Failures:      b.failures.Load(),
 			Requests:      b.requests.Load(),
 			TotalFailures: b.totalFailures.Load(),
+			Latency:       b.latency.snapshot(),
 		})
 	}
 	return Stats{Backends: backends}

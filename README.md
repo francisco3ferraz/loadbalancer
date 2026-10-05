@@ -5,7 +5,8 @@
 An HTTP (layer 7) load balancer in Go, using only the standard library plus a
 YAML parser. Four algorithms, active and passive health checks, retries, TLS
 with HTTP/2, and config reload without dropping a request. About 60,000 requests/sec on a
-laptop, with Prometheus metrics and a 7MB Docker image.
+laptop, with latency histograms in Prometheus, a Grafana dashboard and a 7MB
+Docker image.
 
 ```mermaid
 flowchart TB
@@ -30,6 +31,7 @@ flowchart TB
     health -->|GET /health| backends
     sighup([kill -HUP]) --> reload
     prometheus([Prometheus]) -->|scrape| admin
+    grafana([Grafana]) -->|query| prometheus
 ```
 
 A request goes through the [access log](#access-log), the swapper (which a
@@ -75,7 +77,9 @@ feature exists to handle a real failure mode, and each is covered by tests.
 - **Access log:** one structured line per request on stdout, with the backend
   that served it and how many were tried; errors stay on stderr.
 - **Stats and metrics:** an optional admin server with a JSON `/stats`
-  endpoint, Prometheus metrics on `/metrics`, and `pprof` profiles.
+  endpoint, Prometheus metrics on `/metrics` including a latency histogram
+  per backend, and `pprof` profiles; Docker Compose adds Prometheus and a
+  Grafana dashboard.
 
 ## Quick start
 
@@ -105,10 +109,22 @@ curl 127.0.0.1:9000/stats
 docker compose stop backend2  # traffic goes to the other two
 ```
 
-This starts the load balancer, three fake backends and Prometheus, using
-[`docker/config.yaml`](docker/config.yaml). Prometheus scrapes `/metrics`
-every 5 seconds; open <http://127.0.0.1:9090> and try
-`rate(loadbalancer_backend_requests_total[1m])`. Inside a container `127.0.0.1` is
+Then open the Grafana dashboard at <http://127.0.0.1:3000>, and give it some
+traffic to show:
+
+```sh
+wrk -t2 -c8 -d5m https://localhost:8000/   # or, without wrk:
+while :; do curl -so /dev/null --cacert cert.pem https://localhost:8000; done
+```
+
+This starts the load balancer, three fake backends, Prometheus and Grafana,
+using [`docker/config.yaml`](docker/config.yaml). The backends answer with
+different latencies (`-delay` and `-jitter`), so they can be told apart.
+Prometheus scrapes `/metrics` every 5 seconds; its UI is at
+<http://127.0.0.1:9090>. Grafana's data source and dashboard are loaded from
+[`docker/grafana`](docker/grafana); anyone who can reach it may view them,
+and logging in as `admin`/`admin` allows editing, which isn't saved back to
+the file. Inside a container `127.0.0.1` is
 that container, so the backends are reached by their Compose service names,
 and the admin server listens on all interfaces but is published only on the
 host's loopback.

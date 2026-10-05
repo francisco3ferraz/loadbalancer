@@ -1,0 +1,13 @@
+# The Prometheus service from docker-compose.yml, as Grafana's data source.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Prometheus' scrape interval, so $__rate_interval is never too short
+      # to hold two samples.
+      timeInterval: 5s

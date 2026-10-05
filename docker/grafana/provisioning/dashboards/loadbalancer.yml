@@ -1,0 +1,9 @@
+# Loads the dashboards in /etc/grafana/dashboards, mounted from
+# docker/grafana/dashboards. Edits made in Grafana's UI aren't saved back:
+# export the JSON over the file to keep them.
+apiVersion: 1
+providers:
+  - name: loadbalancer
+    type: file
+    options:
+      path: /etc/grafana/dashboards

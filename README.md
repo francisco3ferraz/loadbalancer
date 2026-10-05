@@ -4,13 +4,13 @@
 
 An HTTP (layer 7) load balancer in Go, using only the standard library plus a
 YAML parser. Four algorithms, active and passive health checks, retries, TLS
-with HTTP/2, and config reload without dropping a request. About 60,000 requests/sec on a
-laptop, with latency histograms in Prometheus, a Grafana dashboard and a 7MB
-Docker image.
+with HTTP/2, and config reload without dropping a request. About 60,000
+requests/sec on a laptop, with latency histograms in Prometheus, a Grafana
+dashboard and a 7.5MB Docker image.
 
 ```mermaid
 flowchart TB
-    client([Client]) -->|HTTP| listener
+    client([Client]) -->|HTTP or HTTPS| listener
 
     subgraph process [loadbalancer process]
         listener["Listener :8000<br/>TLS · HTTP/2 · access log"] --> swapper["Swapper<br/>atomic.Pointer"]
@@ -118,29 +118,30 @@ curl 127.0.0.1:9000/stats
 docker compose stop backend2  # traffic goes to the other two
 ```
 
-Then open the Grafana dashboard at <http://127.0.0.1:3000>, and give it some
-traffic to show:
+This starts the load balancer, three fake backends, Prometheus and Grafana,
+using [`docker/config.yaml`](docker/config.yaml). The backends answer with
+different latencies (`-delay` and `-jitter`), so they can be told apart.
+Inside a container `127.0.0.1` is that container, so the backends are reached
+by their Compose service names, and the admin server listens on all
+interfaces but is published only on the host's loopback.
+
+The Grafana dashboard is at <http://127.0.0.1:3000>. Give it some traffic to
+show:
 
 ```sh
 wrk -t2 -c8 -d5m https://localhost:8000/   # or, without wrk:
 while :; do curl -so /dev/null --cacert cert.pem https://localhost:8000; done
 ```
 
-This starts the load balancer, three fake backends, Prometheus and Grafana,
-using [`docker/config.yaml`](docker/config.yaml). The backends answer with
-different latencies (`-delay` and `-jitter`), so they can be told apart.
 Prometheus scrapes `/metrics` every 5 seconds; its UI is at
 <http://127.0.0.1:9090>. Grafana's data source and dashboard are loaded from
 [`docker/grafana`](docker/grafana); anyone who can reach it may view them,
 and logging in as `admin`/`admin` allows editing, which isn't saved back to
-the file. Inside a container `127.0.0.1` is
-that container, so the backends are reached by their Compose service names,
-and the admin server listens on all interfaces but is published only on the
-host's loopback.
+the file.
 
 The image is built in two stages: the Go toolchain compiles static binaries,
-and only those are copied into a distroless image (about 7MB) that runs as a
-non-root user. It holds both programs: `/loadbalancer` by default, reading
+and only those are copied into a distroless image (7.5MB to download, 17MB
+unpacked) that runs as a non-root user. It holds both programs: `/loadbalancer` by default, reading
 `/etc/loadbalancer/config.yaml`, and `/fakebackend` for the backends.
 `docker stop` sends `SIGTERM`, so requests in progress finish first; Compose
 waits up to 20s, above the load balancer's 15s drain.
@@ -194,8 +195,9 @@ with clients that offer it, others get HTTP/1.1. Plain HTTP sent to the TLS
 port gets a `400`.
 
 ```sh
-# A self-signed certificate for trying it out
+# A self-signed certificate for trying it out, writing cert.pem and key.pem
 go run "$(go env GOROOT)/src/crypto/tls/generate_cert.go" --host localhost
+# Then add tls_cert: cert.pem and tls_key: key.pem to config.yaml and start
 curl -v --cacert cert.pem https://localhost:8000   # "ALPN: server accepted h2"
 ```
 
@@ -336,8 +338,9 @@ A reload starts afresh: every backend begins alive, with its failure count and
 
 Some settings are fixed once the process has started, so a reload that
 changes them is rejected as a whole: `listen`, `admin_listen`, `access_log`,
-turning TLS on or off (changing the certificate is fine), and raising `request_timeout` above its value at startup (the server's own
-timeouts were sized from it). Restart to change these.
+turning TLS on or off (changing the certificate is fine), and raising
+`request_timeout` above its value at startup (the server's own timeouts were
+sized from it). Restart to change these.
 
 ## Testing
 
@@ -368,12 +371,13 @@ to all of them), and prints each PID so you can kill one to simulate a crash.
 ## Project layout
 
 ```
-cmd/loadbalancer     the program: loads config, starts the servers, shuts down
+cmd/loadbalancer     the program: loads config, starts the servers, TLS,
+                     reloads, shuts down
 cmd/fakebackend      a controllable backend for testing
 internal/balancer    proxying, retries, timeouts, health checks, algorithms,
-                     stats, access log
+                     stats, latency histograms, access log
 internal/config      the YAML file format
-internal/admin       the /stats and /debug/pprof endpoints
+internal/admin       the /stats, /metrics and /debug/pprof endpoints
 scripts/             run-backends.sh, bench.sh
 docker/              configs used by docker-compose.yml, Grafana's included
 docs/                the dashboard screenshot
@@ -466,18 +470,6 @@ go tool pprof -http=: http://127.0.0.1:9000/debug/pprof/profile?seconds=20
   keep working.
 - **Bad configuration fails at startup,** never while serving traffic; a bad
   config on reload is rejected and the old one keeps serving.
-
-## Not included
-
-These are real load balancer features, deliberately left out of scope:
-redirecting HTTP to HTTPS and HSTS, TLS or HTTP/2 to backends, client
-certificates (mTLS), automatic certificates (ACME), metrics by status code, structured error
-logs (only the access log is structured), sticky sessions (consistent hashing), latency-based algorithms,
-trusted proxies (behind a CDN or another proxy, forwarding headers describe
-that proxy, not the real client), the standard `Forwarded` header, an
-idle timeout for long-lived connections (a WebSocket or stream whose backend
-goes silent stays open until one end closes it), and closing them cleanly on
-shutdown.
 
 ## License
 

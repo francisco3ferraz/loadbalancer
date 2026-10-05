@@ -15,7 +15,7 @@ flowchart TB
         listener["Listener :8000<br/>TLS · HTTP/2 · access log"] --> swapper["Swapper<br/>atomic.Pointer"]
         subgraph balancer [Balancer]
             picker["Picker<br/>round robin · least conn<br/>+ weighted variants"] --> proxy["ReverseProxy<br/>retries · deadlines<br/>keep-alive pool"]
-            state[("Backend state<br/>alive · active · failures")]
+            state[("Backend state<br/>alive · active · failures<br/>latency histogram")]
             health["Health checker<br/>all backends at once"]
         end
         swapper --> picker
@@ -270,6 +270,22 @@ the request deadline running out, aren't counted.
 | `loadbalancer_backend_requests_total` | counter | Attempts sent to the backend |
 | `loadbalancer_backend_consecutive_failures` | gauge | Failures in a row |
 | `loadbalancer_backend_failures_total` | counter | Failures in total |
+| `loadbalancer_backend_latency_seconds` | histogram | Time from sending a request until the backend's response headers arrived |
+
+Latency is measured per attempt, up to the response headers rather than the
+end of the body, so an event stream or a client reading slowly doesn't make a
+backend look slow. Every answer counts, a `503` included; failed attempts
+don't, since they're in `failures_total`. Buckets go from 1ms to 10s. The
+99th percentile per backend, over the last minute:
+
+```promql
+histogram_quantile(0.99, sum by (backend, le) (rate(loadbalancer_backend_latency_seconds_bucket[1m])))
+```
+
+The histogram is a counter per bucket, updated with two atomic adds per
+response; the benchmark showed no difference beyond noise. A percentile is
+estimated from the buckets by Prometheus, only as precisely as the bucket it
+falls in. It's left out of `/stats`.
 
 A config reload starts the counters from zero, which `rate()` handles like a
 restart. A backend removed by a reload stops being reported.
@@ -428,8 +444,7 @@ go tool pprof -http=: http://127.0.0.1:9000/debug/pprof/profile?seconds=20
 
 These are real load balancer features, deliberately left out of scope:
 redirecting HTTP to HTTPS and HSTS, TLS or HTTP/2 to backends, client
-certificates (mTLS), automatic certificates (ACME), metrics by status code and latency
-histograms (`/metrics` has per-backend counts only), structured error
+certificates (mTLS), automatic certificates (ACME), metrics by status code, structured error
 logs (only the access log is structured), sticky sessions (consistent hashing), latency-based algorithms,
 trusted proxies (behind a CDN or another proxy, forwarding headers describe
 that proxy, not the real client), the standard `Forwarded` header, an

@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/francisco3ferraz/loadbalancer/internal/balancer"
 )
@@ -18,7 +20,11 @@ func (f fakeStats) Stats() balancer.Stats { return balancer.Stats(f) }
 // Every field is non-zero somewhere, so a field the handler failed to encode
 // would show up as a difference instead of decoding to a matching zero.
 var testStats = fakeStats{Backends: []balancer.BackendStats{
-	{URL: "http://a:1", Alive: true, Active: 2, Failures: 0, Requests: 150, TotalFailures: 4},
+	{URL: "http://a:1", Alive: true, Active: 2, Failures: 0, Requests: 150, TotalFailures: 4, Latency: balancer.Latency{
+		Counts: [len(balancer.LatencyBuckets)]uint64{10, 50, 90, 120, 130, 135, 140, 142, 143, 144, 145, 146, 146},
+		Count:  146,
+		Sum:    12345 * time.Millisecond,
+	}},
 	{URL: "http://b:2", Alive: false, Active: 0, Failures: 3, Requests: 7, TotalFailures: 1000000},
 }}
 
@@ -37,7 +43,12 @@ func TestStats(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("body is not valid JSON: %v\n%s", err, rec.Body)
 	}
-	if want := balancer.Stats(testStats); !reflect.DeepEqual(got, want) {
+	// Latency isn't part of /stats.
+	want := balancer.Stats{Backends: slices.Clone(testStats.Backends)}
+	for i := range want.Backends {
+		want.Backends[i].Latency = balancer.Latency{}
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("decoded stats:\n got  %+v\n want %+v", got, want)
 	}
 }

@@ -40,6 +40,15 @@ A request goes through the [access log](#access-log), the swapper (which a
 [retried or answered with a 502, 503 or 504](#how-failures-are-handled). Each
 feature exists to handle a real failure mode, and each is covered by tests.
 
+![Grafana dashboard: p99 and p50 latency, requests and failures per second,
+requests in progress and up/down state for each of three backends; backend2
+is stopped for 45 seconds midway](docs/dashboard.png)
+
+*The Grafana dashboard from `docker compose up`, under load. Each fake backend
+has its own latency, with backend2 the slowest. When it was stopped for 45
+seconds, one failed attempt took it out of rotation, traffic shifted to the
+other two, and a health check brought it back.*
+
 ## Features
 
 - **Four algorithms:** round robin, least connections, weighted round robin
@@ -366,7 +375,8 @@ internal/balancer    proxying, retries, timeouts, health checks, algorithms,
 internal/config      the YAML file format
 internal/admin       the /stats and /debug/pprof endpoints
 scripts/             run-backends.sh, bench.sh
-docker/              configs used by docker-compose.yml
+docker/              configs used by docker-compose.yml, Grafana's included
+docs/                the dashboard screenshot
 ```
 
 ## Performance

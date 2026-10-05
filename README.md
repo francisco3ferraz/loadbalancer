@@ -11,27 +11,28 @@ dashboard and a 7.5MB Docker image.
 ```mermaid
 flowchart TB
     client([Client]) -->|HTTP or HTTPS| listener
+    sighup([kill -HUP]) --> reload
+    prometheus([Prometheus + Grafana]) -->|scrape| admin
 
     subgraph process [loadbalancer process]
         listener["Listener :8000<br/>TLS · HTTP/2 · access log"] --> swapper["Swapper<br/>atomic.Pointer"]
-        subgraph balancer [Balancer]
-            picker["Picker<br/>round robin · least conn<br/>+ weighted variants"] --> proxy["ReverseProxy<br/>retries · deadlines<br/>keep-alive pool"]
-            state[("Backend state<br/>alive · active · failures<br/>latency histogram")]
-            health["Health checker<br/>all backends at once"]
-        end
-        swapper --> picker
-        state -.->|alive only| picker
-        proxy -.->|failures| state
-        health -.->|up / down| state
-        reload["Reload<br/>load · validate · build"] -->|"Swap()"| swapper
+        reload["Reload<br/>config · certificate"] -->|"Swap()"| swapper
         admin["Admin :9000<br/>/stats · /metrics · pprof"] -.->|"Stats()"| swapper
+
+        subgraph balancer [Balancer]
+            picker["Picker<br/>4 algorithms"] --> proxy["ReverseProxy<br/>keep-alive pool"]
+            proxy -.->|"failed: retry"| picker
+            health["Health checker<br/>all backends at once"]
+            state[("Backend state<br/>alive · active · failures<br/>latency histogram")]
+            picker -.->|reads alive| state
+            proxy -.->|"failures · latency"| state
+            health -.->|up / down| state
+        end
+        swapper -->|"request deadline"| picker
     end
 
     proxy --> backends[(Backends)]
     health -->|GET /health| backends
-    sighup([kill -HUP]) --> reload
-    prometheus([Prometheus]) -->|scrape| admin
-    grafana([Grafana]) -->|query| prometheus
 ```
 
 A request goes through the [access log](#access-log), the swapper (which a

@@ -36,6 +36,30 @@ func TestRootRepliesWithName(t *testing.T) {
 	}
 }
 
+func TestLatency(t *testing.T) {
+	s := newServer()
+	s.delay = 5 * time.Millisecond
+	if got := s.latency(); got != s.delay {
+		t.Errorf("without jitter: latency = %s, want %s", got, s.delay)
+	}
+
+	s.jitter = 10 * time.Millisecond
+	const n = 10000
+	var total time.Duration
+	for range n {
+		d := s.latency()
+		if d < s.delay {
+			t.Fatalf("latency %s is under the delay %s", d, s.delay)
+		}
+		total += d - s.delay
+	}
+	// The mean of 10,000 draws has a standard deviation of 1% of jitter,
+	// so it's outside 5% less than once in a million runs.
+	if mean := total / n; mean < s.jitter*95/100 || mean > s.jitter*105/100 {
+		t.Errorf("mean jitter = %s, want about %s", mean, s.jitter)
+	}
+}
+
 func TestErrorRate(t *testing.T) {
 	s := newServer()
 	s.errorRate = 1

@@ -328,6 +328,7 @@ For manual testing, `cmd/fakebackend` is a backend whose failures you control:
 ```sh
 go run ./cmd/fakebackend -port 8081 -delay 30s        # hangs: tests timeouts
 go run ./cmd/fakebackend -port 8081 -error-rate 0.2   # 20% of requests return 500
+go run ./cmd/fakebackend -port 8081 -jitter 10ms      # random latency, averaging 10ms, with a long tail
 curl -X POST localhost:8081/admin/health/down          # fail health checks, keep serving
 curl 'localhost:8000/slow?d=3s'                         # a slow request through the balancer
 curl -N localhost:8000/stream                           # server-sent events, one a second

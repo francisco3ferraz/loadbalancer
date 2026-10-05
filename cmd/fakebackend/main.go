@@ -6,6 +6,7 @@
 //
 //	go run ./cmd/fakebackend -port 8080
 //	go run ./cmd/fakebackend -port 8081 -delay 200ms -error-rate 0.1
+//	go run ./cmd/fakebackend -port 8081 -delay 5ms -jitter 10ms
 //	go run ./cmd/fakebackend -port 8082 -quiet
 //
 // Endpoints:
@@ -43,6 +44,7 @@ import (
 type server struct {
 	name      string
 	delay     time.Duration
+	jitter    time.Duration
 	errorRate float64
 	healthy   atomic.Bool
 }
@@ -51,11 +53,15 @@ func main() {
 	port := flag.Int("port", 8080, "port to listen on")
 	name := flag.String("name", "", `name to reply with (default ":<port>")`)
 	delay := flag.Duration("delay", 0, "latency added to every request on /")
+	jitter := flag.Duration("jitter", 0, "mean of a random latency added on top of -delay, so a few requests are much slower")
 	errorRate := flag.Float64("error-rate", 0, "fraction of requests on / that fail with 500, from 0 to 1")
 	logHealth := flag.Bool("log-health", false, "also log /health requests")
 	quiet := flag.Bool("quiet", false, "log no requests, for benchmarks")
 	flag.Parse()
 
+	if *delay < 0 || *jitter < 0 {
+		log.Fatal("-delay and -jitter must not be negative")
+	}
 	if *errorRate < 0 || *errorRate > 1 {
 		log.Fatalf("-error-rate must be between 0 and 1, got %v", *errorRate)
 	}
@@ -63,7 +69,7 @@ func main() {
 		*name = fmt.Sprintf(":%d", *port)
 	}
 
-	s := &server{name: *name, delay: *delay, errorRate: *errorRate}
+	s := &server{name: *name, delay: *delay, jitter: *jitter, errorRate: *errorRate}
 	s.healthy.Store(true)
 
 	handler := s.routes()
@@ -113,7 +119,7 @@ func (s *server) routes() http.Handler {
 }
 
 func (s *server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if !sleep(r.Context(), s.delay) {
+	if !sleep(r.Context(), s.latency()) {
 		return
 	}
 	if s.errorRate > 0 && rand.Float64() < s.errorRate {
@@ -122,6 +128,17 @@ func (s *server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Backend", s.name)
 	fmt.Fprintln(w, s.name)
+}
+
+// latency returns how long a request on / waits: delay, plus jitter drawn
+// from an exponential distribution, the usual model for service times. Its
+// median is 0.7 × jitter but its 99th percentile 4.6 × jitter, giving the
+// long tail of a real backend.
+func (s *server) latency() time.Duration {
+	if s.jitter == 0 {
+		return s.delay
+	}
+	return s.delay + time.Duration(rand.ExpFloat64()*float64(s.jitter))
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
